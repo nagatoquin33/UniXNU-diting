@@ -1,0 +1,27 @@
+diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -7780,7 +7780,22 @@
+ 	native_owner_data_readonly = (vfs_flags(data_mount) & MNT_RDONLY) != 0;
+ 	if (actual != device || (vfs_flags(data_mount) & MNT_RDONLY) ||
+ 	    strcmp(vfs_statfs(data_mount)->f_fstypename, "apfs")) error = EINVAL;
+-	if (!error) native_owner_data_stage = 4;
++	if (!error) {
++		native_owner_data_stage = 4;
++		user_addr_t tmp_path = scratch + 0x400;
++		int tmp_error = copyout("/private/var/tmp", tmp_path, sizeof("/private/var/tmp"));
++		if (!tmp_error) {
++			struct mkdir_args args = { .path = tmp_path, .mode = 01777 };
++			tmp_error = mkdir(p, &args, &result);
++			if (!tmp_error) {
++				struct chmod_args mode = { .path = tmp_path, .mode = 01777 };
++				tmp_error = chmod(p, &mode, &result);
++			} else if (tmp_error == EEXIST) {
++				tmp_error = 0;
++			}
++		}
++		printf("PONG APFS: Data tmp preparation error=%d\n", tmp_error);
++	}
+ done:
+ 	if (data_root) vnode_put(data_root);
+ 	native_owner_data_status = error;
