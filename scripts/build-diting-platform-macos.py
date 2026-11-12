@@ -23,10 +23,20 @@ def main():
     parser.add_argument('--skip-image-verification', action='store_true')
     args = parser.parse_args()
     tree = args.tree.resolve()
-    if platform.system() != 'Darwin' or platform.machine() != 'x86_64':
+    if platform.system() != 'Darwin' and platform.system() != 'Linux':
         raise SystemExit('This continuation uses the Intel macOS toolchain')
     out = tree / 'build/armdt-platform'
     out.mkdir(parents=True, exist_ok=True)
+    # Linux: the Mac gets <TargetConditionals.h> from Xcode; reuse the tree's
+    # own shim and put it next to the fakeroot SDK headers before compiling.
+    if platform.system() == 'Linux':
+        shim_root = Path(os.environ.get('DITING_NATIVE_DRIVER_SOURCE', str(DEVICE)))
+        shim = shim_root / 'scripts/linux/TargetConditionals.h'
+        if shim.exists():
+            inc = tree / '.cache/fakeroot/usr/include'
+            inc.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(shim, inc / 'TargetConditionals.h')
+
     source = DEVICE / 'drivers/ArmDTPlatform/ArmDTPlatform.cpp'
     framework = tree / '.cache/fakeroot/System/Library/Frameworks/Kernel.framework/Versions/A'
     if not (framework / 'PrivateHeaders/IOKit/IOPlatformExpert.h').exists():

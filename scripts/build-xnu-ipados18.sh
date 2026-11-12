@@ -255,6 +255,19 @@ if [ ! -d refer/libplatform/.git ]; then
   git clone --depth 1 --branch "$LIBPLATFORM_TAG" https://github.com/apple-oss-distributions/libplatform.git refer/libplatform
 fi
 export KERNEL_SDKROOT=$ROOT/.cache/fakeroot
+if [ "$(uname -s)" = "Linux" ]; then
+  # The Linux xcrun shim answers every -sdk/-show-sdk-path request with
+  # UNIXNU_SDKROOT; hand it the fakeroot this script assembles instead of
+  # letting the value stay empty.
+  export UNIXNU_SDKROOT="$KERNEL_SDKROOT"
+  # The SDK's TargetConditionals.h is a public header the Mac gets from Xcode.
+  # The Linux tree carries the equivalent shim; install it with the fakeroot.
+  tc="${DITING_NATIVE_DRIVER_SOURCE:-}/scripts/linux/TargetConditionals.h"
+  if [ -f "$tc" ]; then
+    mkdir -p "$KERNEL_SDKROOT/usr/include"
+    cp -f "$tc" "$KERNEL_SDKROOT/usr/include/TargetConditionals.h"
+  fi
+fi
 mkdir -p "$KERNEL_SDKROOT/usr/local/include/kernel" "$ROOT/build/xnu/obj/EXPORT_HDRS/libsa"
 ditto refer/libplatform/include "$KERNEL_SDKROOT/usr/local/include"
 ditto refer/libplatform/private "$KERNEL_SDKROOT/usr/local/include"

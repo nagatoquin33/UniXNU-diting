@@ -39,12 +39,25 @@ def main():
         link(src,tree/'refer'/ref['name'])
     for name in ('drivers','kits','package'):link(DEVICE/name,tree/name)
     (tree/'scripts').mkdir(exist_ok=True)
-    for name in ('build-firehose.sh','prepare-xnu-source.py'):
-        shutil.copyfile(DEVICE/'scripts'/name,tree/'scripts'/name)
+    overlay_root = Path(os.environ.get('DITING_NATIVE_DRIVER_SOURCE', str(DEVICE)))
+    for name in ('build-firehose.sh','prepare-xnu-source.py','linux/TargetConditionals.h'):
+        src = DEVICE/'scripts'/name
+        if not src.exists():
+            src = overlay_root/'scripts'/name
+        (tree/'scripts'/name).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(src,tree/'scripts'/name)
     shutil.copyfile(DEVICE/'scripts/build-xnu-ipados18.sh',tree/'scripts/build-xnu-ipados18.sh')
     link(DEVICE/'patches/xnu-ipados18',tree/'patches/xnu')
     (tree/'build').mkdir(exist_ok=True);(tree/'.cache').mkdir(exist_ok=True)
-    env={k:v for k,v in os.environ.items() if not k.startswith(('XNU_','UNIXNU_'))}
+    # Drop the version pins the kit sets itself, but keep the Linux toolchain
+    # contract: the xcrun shim answers every SDK query from UNIXNU_SDKROOT, and
+    # the host-tool flags read UNIXNU_HOST_CCTOOLS_INCLUDE. Dropping those here
+    # left the shim with an empty SDK path even when the caller exported it.
+    toolchain_contract=('UNIXNU_SHIM','UNIXNU_HOST_CCTOOLS_INCLUDE','UNIXNU_SDKROOT')
+    env={k:v for k,v in os.environ.items()
+         if not k.startswith(('XNU_','UNIXNU_'))
+         or k.startswith('XNU_LINUX_')
+         or k in toolchain_contract}
     env.update(DEVELOPER_DIR=str(a.developer_dir),JOBS=str(a.jobs),DITING_NATIVE_DRIVER_SOURCE=str(DEVICE),
         UNIXNU_IOS_TARGET='18.0',SCAN_BUILD='',DO_CTFMERGE='0',CTFINSERT='',CTFCONVERT='',CTFMERGE='',CTFDUMP='')
     if a.hardware_dtb:env['DITING_HARDWARE_DTB']=str(a.hardware_dtb.resolve())
