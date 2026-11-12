@@ -204,6 +204,12 @@ for PATCH in "${PATCHES[@]}"; do
     echo "Already applied: $(basename "$PATCH")"
   elif git -C .cache/xnu-work apply --check "$PATCH" >/dev/null 2>&1; then
     git -C .cache/xnu-work apply "$PATCH"
+  elif git -C .cache/xnu-work apply --reverse --check -C0 "$PATCH" >/dev/null 2>&1; then
+    # Later patches shift the context this patch was applied against, so the
+    # full-context reverse check above misses it on a consecutive build and the
+    # fuzz fallback below would let patch auto-reverse it (deleting
+    # osfmk/vm/vm_link_compat.c). Changed lines are still required with -C0.
+    echo "Already applied: $(basename "$PATCH")"
   elif patch --dry-run --batch --fuzz=3 -p1 -d .cache/xnu-work < "$PATCH" >/dev/null 2>&1; then
     patch --batch --fuzz=3 -p1 -d .cache/xnu-work < "$PATCH"
   else
