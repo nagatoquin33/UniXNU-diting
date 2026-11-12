@@ -986,3 +986,8 @@ work is the boot itself, not the inputs.
 - 观察（全离线）：`finalize-*.log` 记 `"ufs_probe": true`；blob 1 = 16,536 B，含 `/device-tree/arm-io/ufshc` 全套 Diting 属性（`ufs-hc-base 0x1d84000`、`gcc-ufs-page 0x187000`、`smmu-base 0x15000000`、`smmu-stream-id 0xe0`、`context-banks 0x4e`、`match-groups 0x78`、`ufs-spi 0x109`、userdata LBA `0x2f8a00-0x3adf3fa`）；`root-matching` UUID `B07DF049…`、`diting-touch`/`diting-buttons`/`boot-epoch` 不变；contract PASS、storage PASS、`structure_matches_b1_kernel_slot: true`。镜像：metal=1 `6b0f53c45e32d9263996e9388b715519aadc7cf9aad2b1ca53beabad67299c75`、metal=0 `cf007f172bcd43c1c87abc53da4e4447f2cacc9d4ac4d4aa947994cb9b318f7c`（均 101,187,584 B）。`hardware_tested=false`。
 - 结论：离线层面 root-mount 缺件已补齐；是否恢复挂载仍需 E2a 真机确认，不预先声称。
 - 下一步：设备回 fastboot、用户在场后 `fastboot boot` metal=1 镜像，用 Advanced Logger/ramoops 取证 `DITING_UFS:`/SHNGROOT/APFS 行；若根卷发布成功，再继续 Metal 结果验证与 WiFi/多核/触摸各单变量轮。
+
+### E2 附记 — release kernel 未含 C4 触摸修复（一致性警告）
+
+- 证据：E2 内嵌 kernel `7434c82f…` 源自 native aggregate `0477ce0a…`（E1 复用）；`strings` 中只有 `ldoc3`/`ldoc12` 旧路径，无 `ldoc2`/GPIO71/TCS4/`IC_INFO` 字符串 → kernel 构建早于 `0001` patch 的 C4 工作区编辑。
+- 口径：E2a 上机后触摸若失败，记为 **pre-C4 行为**，不归因 C4 修复无效、不归因 ufs 修复；release kernel 带 C4 重建列为独立待办（需先决定 `0001` patch 的提交策略）。
