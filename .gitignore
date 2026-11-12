@@ -44,3 +44,6 @@ __pycache__/
 /local.toml
 /unixnu.local.toml
 /build-services*.log
+
+# B1/product build scratch output; never commit.
+/build-work/
