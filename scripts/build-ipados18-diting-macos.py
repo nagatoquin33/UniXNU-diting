@@ -27,9 +27,13 @@ def main():
     p.add_argument('--skip-image-verification',action='store_true',default=True)
     a=p.parse_args();tree=a.tree.resolve()
     tree.mkdir(parents=True,exist_ok=True)
+    local=DEVICE/'local.toml'
+    overrides=tomllib.loads(local.read_text()).get('source',[]) if local.exists() else []
     refs=[r for r in tomllib.loads((DEVICE/'feeds.toml').read_text())['source'] if r['kind']=='refer']
     for ref in refs:
-        src=DEVICE/'refer/ipados18'/ref['ref']
+        override=next((s for s in overrides if s.get('kind')=='refer' and s.get('name')==ref['name']),{})
+        src=Path(override['local']).expanduser() if override.get('local') else DEVICE/'refer/ipados18'/ref['ref']
+        if not src.is_absolute():src=DEVICE/src
         rev=subprocess.check_output(['git','rev-parse','HEAD'],cwd=src,text=True).strip()
         if rev!=ref['commit']:raise RuntimeError(f'Wrong source revision for {ref["name"]}')
         link(src,tree/'refer'/ref['name'])
@@ -76,6 +80,23 @@ def main():
     for line in resolved.splitlines():
         if line.startswith('CONFIG_XNU_'):
             key,value=line.removeprefix('CONFIG_').split('=',1);env[key]={'y':'1','n':'0'}.get(value,value.strip('"'))
+    # Fail at the configuration boundary, before building an archive whose
+    # startup entry or platform helper would otherwise be omitted at link.
+    dependencies = {
+        # Wi-Fi itself needs the shared SMMU lease, which DitingPlatformResources provides;
+        # that object is built by the full power archive or by --resources-only when
+        # NATIVE_UFS is set, so the power/audio archive is not required to build it.
+        'XNU_DITING_WIFI': ('XNU_ARMCPU', 'XNU_NATIVE_UFS'),
+        'XNU_DITING_BACKLIGHT': ('XNU_DITING_POWER',),
+        'XNU_DITING_POWER': ('XNU_ARM_DT_PLATFORM', 'XNU_ARMCPU'),
+        'XNU_ARM_DT_PLATFORM': ('XNU_ARMCPU',),
+    }
+    for feature, required in dependencies.items():
+        if env.get(feature, '0') == '1':
+            missing = [key for key in required if env.get(key, '0') != '1']
+            if missing: raise SystemExit(feature + ' requires ' + ', '.join(missing))
+    if env.get('XNU_SOURCE_CORECRYPTO14', '0') != '0':
+        raise SystemExit('22H374 requires its matching prelinked crypto, not the Darwin22 archive recipe')
     # Only the board-specific archive has a matching 22H374 binding profile.
     # Other legacy display/AIR archives remain excluded.
     legacy_gpu = ('XNU_NATIVE_ADRENO',

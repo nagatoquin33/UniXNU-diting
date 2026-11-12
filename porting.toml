@@ -458,7 +458,7 @@ evidence = [{kind = "source", reported_kind = "host-build", reference = "migrati
 id = "cumulative-runtime-pr167"
 status = "implemented"
 components = ["DitingPlatform24"]
-paths = ["drivers/**", "userland/**", "patches/**", "kits/DitingPlatform24/build-with-runtime.py", "kits/DitingPlatform24/build-support/merged-scripts/**", "scripts/prepare-diting-mesa.py"]
+paths = ["drivers/**", "userland/**", "patches/**", "kits/DitingPlatform24/build-with-runtime.py", "scripts/prepare-diting-mesa.py"]
 inputs = ["Remote main aaa2d739 packaging and AppCryptex changes", "All accumulated local board/runtime repairs through167", "Pinned public Mesa and metal2vulkan sources"]
 configuration = ["Diting SM8475/A730, 22H374 arm64/native4KiB; board.toml and diting_ipados18_defconfig; matching per-round kernel/runtime recipes documented in the evidence reference."]
 findings = ["Merged native helper/UI/audio/sleep/Sileo/phone/route binaries, frontend,ArmCpu and changed GPU units compiled. Prepared Mesa source reproduces all25 changed source files; current device results remain separately recorded.", "drivers/ 下 12 个板级驱动拆为 Chengdong-Yu/diting-* submodule；路径名与相对 include 保持不变，package.yml 已有 submodules: recursive。"]

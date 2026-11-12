@@ -4,18 +4,21 @@
 Firmware is read from the user's local recovery extraction, embedded only in
 ignored build output, never committed here. No images are hashed/read back.
 """
-import argparse,importlib.util,json,os,struct,subprocess,sys
+import argparse,importlib.util,json,os,re,struct,subprocess,sys
 from pathlib import Path
+from diting_native_inputs import build_env, input_path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
 import diting_paths
 def main():
  p=argparse.ArgumentParser(description=__doc__)
  p.add_argument('--tree',type=Path,required=True)
- p.add_argument('--ath11k',type=Path,default=diting_paths.wifi_build()/'libDitingAth11k.a')
- p.add_argument('--firmware',type=Path,default=diting_paths.wifi_firmware())
+ p.add_argument('--ath11k',type=Path)
+ p.add_argument('--firmware',type=Path,default=input_path('wifi_firmware'))
  a=p.parse_args();out=a.tree/'build/diting-wifi';out.mkdir(parents=True,exist_ok=True)
- shared=diting_paths.sheng_root()
+ if a.ath11k is None:a.ath11k=a.tree/'build/diting-ath11k/libDitingAth11k.a'
+ shared=input_path('wifi_shared')
+ if not a.ath11k.is_file():raise RuntimeError('Build the matching Diting ath11k archive first: '+str(a.ath11k))
  profile=json.loads((ROOT/'configs/diting-wifi-sm8475.json').read_text())
  if profile['soc']!='SM8475' or profile['pci']['device']!=0x1103:raise RuntimeError('Diting QCA6490 profile required')
  hardware=os.environ.get('DITING_LIVE_DTB') or os.environ.get('DITING_HARDWARE_DTB')
@@ -64,7 +67,18 @@ def main():
   header+='static constexpr unsigned %s=%du;\n'%(name,value)
 
  (out/'DitingWifiInputs.h').write_text(header)
- fw=sorted(f for f in a.firmware.iterdir() if f.is_file())
+ provenance_path=a.firmware.parent/'local-inputs.json'
+ provenance=json.loads(provenance_path.read_text())
+ source=provenance.get('source',{})
+ if (source.get('product','').lower()!='diting' or source.get('capture')!='REC read-only active modem'
+     or source.get('slot') not in ('_a','_b')
+     or source.get('partition')!='/dev/block/by-name/modem'+source['slot']
+     or Path(provenance['firmware_directory']).resolve()!=a.firmware.resolve()):
+  raise RuntimeError('Capture actual active-slot Diting firmware with prepare-diting-wifi.py first')
+ # Embed radio payloads and board data only, never capture metadata/debug databases.
+ fw=sorted(f for f in a.firmware.iterdir() if f.is_file() and
+           (f.name in ('amss.bin','amss20.bin','m3.bin','regdb.bin') or
+            re.fullmatch(r'bdwlan(?:g|[0-9a-f]{2})?\.(?:elf|e[0-9a-f]{2})',f.name)))
  if not all((a.firmware/n).is_file() for n in ('amss.bin','amss20.bin','m3.bin','regdb.bin')):raise RuntimeError('Actual Diting modem firmware required')
  entries=[];at=(8+len(fw)*40+4095)&~4095
  for f in fw:
@@ -78,10 +92,11 @@ def main():
   for _,off,size,path in entries:
    f.seek(off);f.write(path.read_bytes())
  asm=out/'DitingWifiFirmware.s';asm.write_text('.section __TEXT,__const\n.p2align 12\n.globl _diting_wifi_firmware\n_diting_wifi_firmware:\n.incbin "'+str(pack)+'"\n.globl _diting_wifi_firmware_end\n_diting_wifi_firmware_end:\n')
+ (out/'firmware-source.json').write_text(json.dumps(dict(source=source,files=[dict(name=f.name,bytes=f.stat().st_size) for f in fw]),indent=2)+'\n')
  framework=a.tree/'.cache/fakeroot/System/Library/Frameworks/Kernel.framework/Versions/A'
- env=dict(os.environ,DEVELOPER_DIR=str(diting_paths.developer_dir()))
+ env=build_env()
  sdk=subprocess.check_output(['xcrun','--sdk','iphoneos','--show-sdk-path'],env=env,text=True).strip()
- flags=['-target','arm64-apple-ios18.0','-isysroot',sdk,'-mkernel','-ffreestanding','-fno-builtin','-fno-exceptions','-fno-rtti','-fno-stack-protector','-mgeneral-regs-only','-std=gnu++17','-fblocks','-O2','-DKERNEL=1','-DKERNEL_PRIVATE=1','-DXNU_KERNEL_PRIVATE=1','-DARM64_BOARD_CONFIG_DITING=1','-I'+str(framework/'PrivateHeaders'),'-I'+str(framework/'Headers'),'-I'+str(shared/'drivers/Ath12kWifi/include'),'-I'+str(shared/'package'),'-I'+str(out),'-Wno-deprecated-declarations']
+ flags=['-target','arm64-apple-ios18.0','-isysroot',sdk,'-mkernel','-ffreestanding','-fno-builtin','-fno-exceptions','-fno-rtti','-fno-stack-protector','-mgeneral-regs-only','-std=gnu++17','-fblocks','-O2','-DKERNEL=1','-DKERNEL_PRIVATE=1','-DXNU_KERNEL_PRIVATE=1','-DARM64_BOARD_CONFIG_DITING=1','-I'+str(framework/'PrivateHeaders'),'-I'+str(framework/'Headers'),'-I'+str(shared/'include'),'-I'+str(input_path('sheng_source')/'package'),'-I'+str(out),'-Wno-deprecated-declarations']
  objects=[]
  for name in ('DitingWifiPlatform','DitingWifiNet'):
   obj=out/(name+'.o');cmd=['xcrun','clang++',*flags,'-c',str(ROOT/'drivers/DitingWifi'/(name+'.cpp')),'-o',str(obj)]
@@ -113,7 +128,6 @@ def main():
    obj=out/'DitingWifiNet.late.o';obj.write_bytes(raw)
   objects.append(obj)
  obj=out/'DitingWifiFirmware.o';subprocess.run(['xcrun','clang','-target','arm64-apple-ios18.0','-c',str(asm),'-o',str(obj)],env=env,check=True);objects.append(obj)
- obj=out/'DitingQcomRpmh.o';subprocess.run(['xcrun','clang',*flags[:flags.index('-std=gnu++17')],'-O2','-I'+str(shared/'package'),'-c',str(shared/'package/QcomRpmh.c'),'-o',str(obj)],env=env,check=True);objects.append(obj)
  archive=out/'libDitingWifiNative.a';archive.unlink(missing_ok=True)
  subprocess.run(['xcrun','libtool','-static','-o',str(archive),str(a.ath11k),*map(str,objects)],env=env,check=True)
  (out/'build-report.json').write_text(json.dumps(dict(board='Diting SM8475 QCA6490',guest='22H374',backend='Linux v7.0.14 ath11k',archive=str(archive),firmware_from_REC=str(a.firmware),firmware_files=len(entries),firmware_bytes=pack.stat().st_size,image_verification='skipped by request',runtime_observed=False),indent=2)+'\n')

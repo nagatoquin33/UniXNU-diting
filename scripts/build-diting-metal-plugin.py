@@ -18,6 +18,7 @@ p.add_argument('--guest-build',choices=('20G81','22H374'),default='20G81')
 p.add_argument('--turnip-library',type=Path,required=True)
 p.add_argument('--output-dir',type=Path,required=True)
 p.add_argument('--clients',help='comma-separated process names, or * for system-wide native discovery')
+p.add_argument('--prime-list',type=Path,help='Actual guest metallib paths, embedded for the idle shader-cache worker')
 p.add_argument('--developer-dir',type=Path,default=diting_paths.developer_dir())
 a=p.parse_args()
 # The upstream catalog separates hardware support from the selected OS ABI.
@@ -44,9 +45,13 @@ command=['xcrun','clang++','-target','arm64-apple-ios'+minimum,'-isysroot',sdk,
     '-framework','Foundation','-framework','CoreFoundation','-framework','Metal',
     '-Wl,-rpath,@loader_path','-Wl,-install_name,@rpath/DitingAdrenoMetal.bundle/DitingAdrenoMetal',
     '-o',str(bundle/'DitingAdrenoMetal')]
+if a.prime_list:
+    if not a.prime_list.is_file():raise SystemExit('metallib path list missing')
+    command+=['-Wl,-sectcreate,__DATA,__primelist,'+str(a.prime_list.resolve())]
 subprocess.run(command,env=env,check=True)
 shutil.copyfile(a.bridge_directory/'DitingMetalBridge.dylib',bundle/'DitingMetalBridge.dylib')
 shutil.copyfile(a.turnip_library,bundle/'libvulkan_freedreno.dylib')
+if a.prime_list:shutil.copyfile(a.prime_list,bundle/'DitingAdrenoMetal.primelist')
 for binary in ['DitingAdrenoMetal','DitingMetalBridge.dylib','libvulkan_freedreno.dylib']:
     subprocess.run(['codesign','--force','--sign','-','--pagesize','4096',str(bundle/binary)],check=True)
 with (bundle/'Info.plist').open('wb') as f:

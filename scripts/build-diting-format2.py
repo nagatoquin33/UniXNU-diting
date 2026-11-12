@@ -22,6 +22,16 @@ def main():
     spec=importlib.util.spec_from_file_location('diting_format2',ROOT/'scripts/migrate-diting-format2.py')
     migration=importlib.util.module_from_spec(spec);spec.loader.exec_module(migration)
     state=migration.install(up, ROOT.parent/'UniXNU-sm8475-common')
+    # The published baseline is immutable metadata; record the source that
+    # was actually compiled separately when auditing local edits.
+    state=dict(state,upstream_revision=subprocess.check_output(
+        ['git','rev-parse','HEAD'],cwd=up,text=True).strip(),
+        upstream_working_tree_dirty=bool(subprocess.check_output(
+            ['git','status','--porcelain'],cwd=up,text=True).strip()),
+        device_revision=subprocess.check_output(
+        ['git','rev-parse','HEAD'],cwd=ROOT,text=True).strip(),
+        working_tree_dirty=bool(subprocess.check_output(
+            ['git','status','--porcelain'],cwd=ROOT,text=True).strip()))
     command=[sys.executable,str(up/'unixnu')]
     common=['-D',str(ROOT),'--out',str(out)]
     subprocess.run(command+['defconfig', a.defconfig, *common],cwd=up,check=True)

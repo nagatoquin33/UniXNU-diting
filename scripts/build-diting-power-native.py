@@ -5,6 +5,7 @@ No private firmware is embedded in the archive. No phone I/O or image audits.
 import argparse,os,json,struct,subprocess
 import sys
 from pathlib import Path
+from diting_native_inputs import build_env, input_path
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
 import diting_paths
@@ -35,15 +36,16 @@ def main():
  a=p.parse_args()
  out=a.tree/'build/diting-power';out.mkdir(parents=True,exist_ok=True)
  framework=a.tree/'.cache/fakeroot/System/Library/Frameworks/Kernel.framework/Versions/A'
- env=dict(os.environ,DEVELOPER_DIR=str(diting_paths.developer_dir()))
+ env=build_env()
  sdk=subprocess.check_output(['xcrun','--sdk','iphoneos','--show-sdk-path'],env=env,text=True).strip()
- flags=['-target','arm64-apple-ios18.0','-isysroot',sdk,'-mkernel','-ffreestanding','-fno-builtin','-fno-stack-protector','-mgeneral-regs-only','-fblocks','-O2','-DKERNEL=1','-DKERNEL_PRIVATE=1','-DXNU_KERNEL_PRIVATE=1','-DARM64_BOARD_CONFIG_DITING=1','-I'+str(framework/'PrivateHeaders'),'-I'+str(framework/'Headers'),'-I'+str(ROOT/'drivers/DitingPower'),'-I'+str(out),'-I'+str(diting_paths.sheng_root()/'package'),'-Wno-deprecated-declarations']
+ shared=input_path('sheng_source')/'package'
+ flags=['-target','arm64-apple-ios18.0','-isysroot',sdk,'-mkernel','-ffreestanding','-fno-builtin','-fno-stack-protector','-mgeneral-regs-only','-fblocks','-O2','-DKERNEL=1','-DKERNEL_PRIVATE=1','-DXNU_KERNEL_PRIVATE=1','-DARM64_BOARD_CONFIG_DITING=1','-I'+str(framework/'PrivateHeaders'),'-I'+str(framework/'Headers'),'-I'+str(ROOT/'drivers/DitingPower'),'-I'+str(out),'-I'+str(shared),'-Wno-deprecated-declarations']
  if not a.resources_only:
-  subprocess.run([os.sys.executable,str(ROOT/'scripts/prepare-diting-audio.py'),'--container',str(diting_paths.audio_inputs()/'tfa98xx.cnt'),'--output',str(out/'DitingAmpProfiles.h')],check=True)
+  subprocess.run([os.sys.executable,str(ROOT/'scripts/prepare-diting-audio.py'),'--container',str(input_path('audio_container')),'--output',str(out/'DitingAmpProfiles.h')],check=True)
  objects=[]
- NAMES=('DitingPlatformResources.cpp',) if a.resources_only else ('QcomSmem.c','QcomSmp2p.c','QcomGlink.c','QcomMdt.c','QcomQmp.c','ShengBattmgr.c','ShengGpr.c','ShengAudioReach.c','GeniI2c.c','DitingFirmware.c','DitingAdsp.cpp','DitingBattery.cpp','DitingAudio.cpp','DitingAudioService.cpp','DitingPower.cpp','DitingBacklight.cpp')
+ NAMES=('DitingPlatformResources.cpp',) if a.resources_only else ('QcomRpmh.c','QcomSmem.c','QcomSmp2p.c','QcomGlink.c','QcomMdt.c','QcomQmp.c','ShengBattmgr.c','ShengGpr.c','ShengAudioReach.c','GeniI2c.c','DitingFirmware.c','DitingAdsp.cpp','DitingBattery.cpp','DitingAudio.cpp','DitingAudioService.cpp','DitingPlatformResources.cpp','DitingPower.cpp','DitingBacklight.cpp')
  for name in NAMES:
-  source=ROOT/'drivers/DitingPower'/name;obj=out/(source.stem+'.o');cpp=source.suffix=='.cpp'
+  source=(shared if name=='QcomRpmh.c' else ROOT/'drivers/DitingPower')/name;obj=out/(source.stem+'.o');cpp=source.suffix=='.cpp'
   cmd=['xcrun','clang++' if cpp else 'clang',*flags,*(['-std=gnu++17','-fno-exceptions','-fno-rtti'] if cpp else []),'-c',str(source),'-o',str(obj)]
   r=subprocess.run(cmd,env=env,capture_output=True,text=True);(out/(source.stem+'.log')).write_text(r.stdout+r.stderr)
   if r.returncode:raise SystemExit(r.stderr)

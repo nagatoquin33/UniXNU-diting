@@ -8,6 +8,7 @@ import platform
 import shutil
 import subprocess
 import sys
+from diting_native_inputs import build_env
 
 DEVICE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(DEVICE / 'scripts'))
@@ -32,7 +33,7 @@ def main():
     framework = tree / '.cache/fakeroot/System/Library/Frameworks/Kernel.framework/Versions/A'
     if not (framework / 'PrivateHeaders/IOKit/IOPlatformExpert.h').exists():
         raise SystemExit('First build the native DITING kernel SDK')
-    env = dict(os.environ, DEVELOPER_DIR=str(DEVELOPER))
+    env = build_env()
     sdk = subprocess.check_output(['xcrun', '--sdk', 'iphoneos', '--show-sdk-path'], text=True, env=env).strip()
     target = 'arm64-apple-ios' + os.environ.get('UNIXNU_IOS_TARGET', '18.0')
     darwin = os.environ.get('UNIXNU_XNU_DARWIN', '24.6.0').split('.')[0]

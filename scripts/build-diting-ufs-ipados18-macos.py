@@ -9,6 +9,7 @@ import platform
 import shutil
 import subprocess
 import sys
+from diting_native_inputs import build_env
 
 DEVICE = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(DEVICE / 'scripts'))
@@ -32,17 +33,20 @@ def main():
     subprocess.run([os.sys.executable, str(DEVICE/'scripts/prepare-ipados18-storage.py'), '--tree', str(tree)],check=True)
     source = DEVICE / 'drivers/NativeUfs/NativeUfs.cpp'
     framework = tree / '.cache/fakeroot/System/Library/Frameworks/Kernel.framework/Versions/A'
-    env = dict(os.environ, DEVELOPER_DIR=str(DEVELOPER))
+    env = build_env()
     sdk = subprocess.check_output(
         ['xcrun', '--sdk', 'iphoneos', '--show-sdk-path'], text=True, env=env).strip()
     obj = out / 'NativeUfs.o'
-    trace_enabled = 'CONFIG_XNU_DITING_EARLY_TRACE=y' in (DEVICE / 'configs/diting_ipados18_defconfig').read_text().splitlines()
+    data_enabled = env.get('XNU_OWNER_DATA_UFS') == '1' if 'XNU_OWNER_DATA_UFS' in env else (
+        'CONFIG_XNU_OWNER_DATA_UFS=y' in (DEVICE / 'configs/diting_ipados18_defconfig').read_text().splitlines())
+    trace_enabled = env.get('XNU_DITING_EARLY_TRACE') == '1' if 'XNU_DITING_EARLY_TRACE' in env else (
+        'CONFIG_XNU_DITING_EARLY_TRACE=y' in (DEVICE / 'configs/diting_ipados18_defconfig').read_text().splitlines())
     command = ['xcrun', '--sdk', 'iphoneos', 'clang++', '-target', 'arm64-apple-ios18.0',
         '-isysroot', sdk, '-mkernel', '-ffreestanding', '-fno-builtin', '-fno-exceptions',
         '-fno-rtti', '-fno-stack-check', '-std=gnu++17', '-fblocks', '-O2',
         '-DKERNEL=1', '-DKERNEL_PRIVATE=1', '-DXNU_KERNEL_PRIVATE=1',
         '-DXNU_DITING_EARLY_TRACE=' + str(int(trace_enabled)),
-        '-DXNU_DITING_UFS_DATA=' + str(int('CONFIG_XNU_OWNER_DATA_UFS=y' in (DEVICE/'configs/diting_ipados18_defconfig').read_text().splitlines())),
+        '-DXNU_DITING_UFS_DATA=' + str(int(data_enabled)),
         '-I' + str(DEVICE / 'mac-build/storage-abi18/include'),
         '-I' + str(tree / '.cache/xnu-work/EXTERNAL_HEADERS'),
         '-I' + str(framework / 'PrivateHeaders'), '-I' + str(framework / 'Headers'),

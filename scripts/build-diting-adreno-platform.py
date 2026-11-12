@@ -54,9 +54,12 @@ def main():
     sources=['AdrenoFirmware','DitingAdrenoHfi','DitingAdrenoGmu','DitingAdrenoSmmu',
              'DitingAdrenoPower','DitingAdrenoClocks','DitingAdrenoZap']
     sources+=['submit/AdrenoPM4']
-    sources+=['ArmSmmu4K/'+name for name in ['ArmSmmu4K','ArmSmmu4KContext',
-        'ArmSmmu4KProgram','ArmSmmu4KStreams','ArmSmmu4KAudit',
-        'ArmSmmu4KLive','ArmSmmu4KTableMemory']]
+    # Darwin24 links one helper archive for GPU/Wi-Fi/audio. Preserve the
+    # standalone iOS16 recipe, whose linker has no shared archive entry.
+    if a.guest_build != '22H374':
+        sources+=['ArmSmmu4K/'+name for name in ['ArmSmmu4K','ArmSmmu4KContext',
+            'ArmSmmu4KProgram','ArmSmmu4KStreams','ArmSmmu4KAudit',
+            'ArmSmmu4KLive','ArmSmmu4KTableMemory','ArmSmmu4KMmio']]
     for name in sources:
         obj=out/(Path(name).name+'.o')
         cmd=['xcrun','clang','-target',target,'-isysroot',sdk,
@@ -90,13 +93,13 @@ def main():
         *(['-DDITING_GUEST_22H374=1'] if a.guest_build=='22H374' else []),
         '-I'+str(framework/'PrivateHeaders'),'-I'+str(framework/'Headers'),
         '-I'+str(out),'-I'+str(source),'-I'+str(source/'ArmSmmu4K'),
-        '-Wno-deprecated-declarations',
+        '-Wno-deprecated-declarations','-Werror=uninitialized','-Werror=return-type',
         '-c',str(source/'DitingAdrenoPlatform.cpp'),'-o',str(obj)]
     subprocess.run(cmd,env=env,check=True);commands.append(cmd);objects.append(obj)
     cpp_template=cmd.copy()
     names=['DitingAdrenoCp','DitingAdrenoNativeGlue','DitingAdrenoScanout','DitingAdrenoAccelerator']+['submit/'+n for n in [
         'NativeAdrenoBoard','NativeAdrenoClient','NativeAdrenoPublish','NativeAdrenoRing','NativeAdrenoCpInit','NativeAdrenoTimer','NativeAdrenoIrq','NativeAdrenoPwrup',
-        'NativeAdrenoCpu','NativeAdrenoMemory','NativeAdrenoSmmuMemory',
+        'NativeAdrenoGpuContext','NativeAdrenoCpu','NativeAdrenoMemory','NativeAdrenoSmmuMemory',
         'NativeAdrenoSmmuContext','NativeAdrenoVm','NativeAdrenoSubmit','NativeAdrenoUserClient']]
     for name in names:
         obj=out/(Path(name).name+'.o');cmd=cpp_template.copy()
@@ -157,6 +160,7 @@ def main():
     archive.unlink(missing_ok=True)
     subprocess.run(['xcrun','ar','rcs',str(archive),*[str(x) for x in objects]],env=env,check=True)
     report=dict(archive=str(archive),guest_build=a.guest_build,target=target,commands=commands,
+        link_dependencies=['build/diting-smmu4k/libDitingSmmu4K.a'] if a.guest_build=='22H374' else [],
         chip_id='0x07030002',gmem_bytes=0x200000,gmu_firmware='gmu_gen70000.bin',
         sqe_firmware='a730_sqe.fw',zap='a730_zap',
         hfi_table_words=210,hfi_queue_offset_bytes=848,active_queues=3,

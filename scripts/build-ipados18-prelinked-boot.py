@@ -8,6 +8,7 @@ sys.path.insert(0,str(ROOT/'kits/NativePrelink'))
 import diting_paths
 from emit_prelink import emit,COALESCED
 from native_prelink import arm64_image,macho,plan
+from diting_rootful_policy import apply as apply_rootful_policy
 
 def main():
  p=argparse.ArgumentParser(description=__doc__)
@@ -42,23 +43,32 @@ def main():
  closure=plan(native,original,roots,slide,verify_images=False)
  library&=set(closure['components'])
  candidate,selection=emit(native,original,roots,slide,verify_images=False,library_only_components=library)
+ # A single board-owned root-upgrade call is adapted after ordinary prelink.
+ # The native helper retains the stock policy unless explicitly requested.
+ candidate,selection['diting_rootful_policy']=apply_rootful_policy(candidate,native,original,slide,selection['components'])
  kernel=a.output_dir/'kernel-ipados18.macho';kernel.write_bytes(candidate)
  (a.output_dir/'prelink.json').write_text(json.dumps(selection,indent=2)+'\n')
  report['base_kernel']=report['kernel'];report['kernel']={'path':str(kernel),'bytes':len(candidate)};report['prelink']={'components':selection['components'],'library_only_components':selection['library_only_components']};report['image_verification']='skipped by request'
  result=a.output_dir/'DITING_BUILD_RESULT.json';result.write_text(json.dumps(report,indent=2)+'\n')
  layout=json.loads(a.volume_layout.read_text())
- opts=['diting_allow_unauthenticated_root=1','cs_enforcement_disable=1','cs_library_val_enable=0','amfi_get_out_of_my_way=1','-apfs_shared_datavolume','debug=0x14e','serial=0','diting_disable_swap=1','diting_skip_setup=1','diting_adsp=2','diting_audio=2','diting_ufs_readwrite=1','ignition_level=1','dyld_flags=0x8','launchd_rd=md0','diting_init_trace=1','applog=1','applog_name=launchd,backboardd,SpringBoard,containermanagerd,lsd,runningboardd,logd_helper,powerd','diting_software_keybag=1','diting_display=1','diting_software_ui=1','diting_ui_software=1','diting_touch=1','diting_buttons=1','diting_init_path=/diting/init','diting_build=ipados18-22H374','epoch='+str(int(time.time()))]
+ opts=['diting_allow_unauthenticated_root=1','cs_enforcement_disable=1','cs_library_val_enable=0','amfi_get_out_of_my_way=1','-apfs_shared_datavolume','debug=0x14e','serial=0','diting_disable_swap=1','diting_skip_setup=1','diting_ufs_readwrite=1','ignition_level=1','dyld_flags=0x8','launchd_rd=md0','diting_init_trace=1','applog=1','applog_name=launchd,backboardd,SpringBoard,containermanagerd,lsd,runningboardd,logd_helper,powerd','diting_software_keybag=1','diting_display=1','diting_software_ui=1','diting_ui_software=1','diting_touch=1','diting_buttons=1','diting_init_path=/diting/init','diting_build=ipados18-22H374','epoch='+str(int(time.time()))]
+ # Keep real, non-boost SM8475 EPSS requests at each domain's allowed maximum.
+ # Firmware/LMh still owns actual voltage and thermal frequency limits.
+ opts+=['diting_cpu_policy=2']
  # The existing CPU scanout scaler divides independent rows among workers.
  # Leave CPU time for the software compositor and stock service startup.
  if gpu:
   opts=[x for x in opts if x not in ('diting_ui_software=1','diting_software_ui=1')]
   opts+=['diting_ui_software=0','diting_software_ui=0','diting_adreno_start=1','diting_metal=1',
-         'diting_gpu_scanout=1','diting_gpu_pool_mib=256','diting_metal_global=1']
+         'diting_gpu_scanout=1','diting_gpu_pool_mib=256','diting_metal_global=1',
+         'diting_gpu_pwrlevel=0']
  # PCM stays optional and publishes only after the real APM/amp/DMA route
  # is ready. Do not silently disable it in an otherwise audio-enabled build.
- # Keep the live board's Wi-Fi worker and wallpaper snapshot policy in
- # every package; rebuilding must not silently drop these opt-in paths.
- opts+=['diting_ram_banks=1','launchd_unsecure_cache=1','diting_wifi=1','diting_poster_snapshot=1',f'fb_threads={min(a.cpus,4)}']
+ # Select peripheral workers from the compiled configuration. Keep the
+ # wallpaper policy independent of optional network/audio support.
+ if report['settings'].get('XNU_DITING_POWER')=='1':opts+=['diting_adsp=2','diting_audio=2']
+ if report['settings'].get('XNU_DITING_WIFI')=='1':opts+=['diting_wifi=1']
+ opts+=['diting_ram_banks=1','launchd_unsecure_cache=1','diting_poster_snapshot=1',f'fb_threads={min(a.cpus,4)}']
  if report['settings'].get('XNU_DITING_BACKLIGHT')=='1':opts+=['diting_backlight=1']
  # PE_parse_boot_argn can select the first duplicate. Apply command-line
  # overrides before packaging so there is exactly one value per named key.

@@ -37,16 +37,19 @@ def overlay(device, destination):
     scripts = destination / 'scripts'
     scripts.mkdir(exist_ok=True)
     selected = {}
-    for source in (device / 'scripts').iterdir():
+    duplicates = HERE / 'build-support/merged-scripts'
+    if duplicates.is_dir() and any(duplicates.iterdir()):
+        raise SystemExit(
+            'Build recipes must live in scripts/: '
+            f'{duplicates} still carries shadow copies')
+    for source in (device / 'scripts').rglob('*'):
         if not source.is_file() or source.name.endswith('.pyc'):
             continue
-        shutil.copy2(source, scripts / source.name)
-        selected[source.name] = 'scripts/' + source.name
-    for source in (HERE / 'build-support/merged-scripts').iterdir():
-        if not source.is_file():
-            continue
-        shutil.copy2(source, scripts / source.name)
-        selected[source.name] = 'kits/DitingPlatform24/build-support/merged-scripts/' + source.name
+        relative = source.relative_to(device / 'scripts')
+        target = scripts / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        selected[str(relative)] = 'scripts/' + str(relative)
     (destination / 'DITING_RECIPE_OVERLAY.json').write_text(json.dumps({
         'device': str(device), 'scripts': selected,
         'source_scripts_modified': False, 'workflow_modified': False,

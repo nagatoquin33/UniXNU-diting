@@ -13,6 +13,8 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import shutil
+from diting_native_inputs import build_env, input_path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
@@ -21,8 +23,8 @@ import diting_paths
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--linux', type=Path, required=True)
-    p.add_argument('--shared', type=Path, default=diting_paths.sheng_root()/'drivers/Ath12kWifi')
+    p.add_argument('--linux', type=Path, default=input_path('wifi_linux'))
+    p.add_argument('--shared', type=Path, default=input_path('wifi_shared'))
     p.add_argument('--output-dir', type=Path, required=True)
     p.add_argument('--jobs', type=int, default=4)
     a = p.parse_args(); linux = a.linux.resolve(); shared = a.shared.resolve(); out = a.output_dir.resolve()
@@ -70,6 +72,64 @@ def main():
 """ + needle
     if core.count(needle) != 1: raise RuntimeError('ath11k BDF request ABI differs')
     (gen / 'core.c').unlink(); (gen / 'core.c').write_text(core.replace(needle, replacement))
+    # A radio crash is terminal for this dispatcher incarnation. Do not send
+    # new WMI packets or repeatedly schedule Linux recovery inside the work
+    # item that is still bringing the MAC up; the board retains DMA/reset.
+    mhi_source = (source / 'mhi.c').read_text()
+    needle = '\tswitch (cb) {\n\tcase MHI_CB_SYS_ERROR:'
+    replacement = '''    if (cb == MHI_CB_SYS_ERROR || cb == MHI_CB_EE_RDDM || cb == MHI_CB_FATAL_ERROR) {
+        extern void diting_ath11k_mhi_failed(struct mhi_controller *, int);
+        diting_ath11k_mhi_failed(mhi_cntrl, cb);
+        ab_pci->mhi_pre_cb = cb;
+        return;
+    }
+''' + needle
+    if mhi_source.count(needle) != 1: raise RuntimeError('ath11k MHI status ABI differs')
+    (gen / 'mhi.c').unlink(); (gen / 'mhi.c').write_text(mhi_source.replace(needle, replacement))
+    wmi = (source / 'wmi.c').read_text()
+    needle = '\tstruct ath11k_base *ab = wmi_ab->ab;\n\n\tmight_sleep();'
+    replacement = '''\tstruct ath11k_base *ab = wmi_ab->ab;
+    extern void diting_ath11k_wmi_submitted(u32);
+    if (test_bit(ATH11K_FLAG_CRASH_FLUSH, &ab->dev_flags)) return -ESHUTDOWN;
+    diting_ath11k_wmi_submitted(cmd_id);
+
+\tmight_sleep();'''
+    if wmi.count(needle) != 1: raise RuntimeError('ath11k WMI send ABI differs')
+    (gen / 'wmi.c').unlink(); (gen / 'wmi.c').write_text(wmi.replace(needle, replacement))
+    # Diting's mobile HSP firmware has no MBSSID AP context for a station.
+    # Linux's generic fallback labels even a station NON_MBSSID_AP; don't
+    # send AP-role flags on this STA-only board integration.
+    mac_source = (source / 'mac.c').read_text()
+    needle = '\tparams->mbssid_tx_vdev_id = 0;\n\n\tif (!test_bit('
+    replacement = '''\tparams->mbssid_tx_vdev_id = 0;
+    if (arvif->vif->type == NL80211_IFTYPE_STATION) goto diting_station_chains;
+
+\tif (!test_bit('''
+    if mac_source.count(needle) != 1: raise RuntimeError('ath11k vdev parameters differ')
+    mac_source = mac_source.replace(needle, replacement)
+    needle = '\tif (pdev->cap.supported_bands & WMI_HOST_WLAN_2G_CAP) {\n\t\tparams->chains'
+    if mac_source.count(needle) != 1: raise RuntimeError('ath11k STA chain setup differs')
+    mac_source = mac_source.replace(needle, 'diting_station_chains:\n' + needle)
+    # ath12k station uses split link/vif notifications; ath11k implements
+    # their combined legacy bss_info_changed callback. Forward real changes
+    # to that implementation, including assoc/disassoc, rather than NULL or
+    # a success stub. The non-MLO vif's default link is the selected BSS.
+    marker = 'static const struct ieee80211_ops ath11k_ops = {'
+    adapter = """static void diting_ath11k_vif_cfg_changed(struct ieee80211_hw *hw,
+        struct ieee80211_vif *vif, u64 changed)
+{
+    ath11k_mac_op_bss_info_changed(hw, vif, &vif->bss_conf, changed);
+}
+
+"""
+    if mac_source.count(marker) != 1: raise RuntimeError('ath11k operations table differs')
+    mac_source = mac_source.replace(marker, adapter + marker)
+    needle = '\t.bss_info_changed               = ath11k_mac_op_bss_info_changed,'
+    if mac_source.count(needle) != 1: raise RuntimeError('ath11k combined BSS callback differs')
+    mac_source = mac_source.replace(needle, needle +
+        '\n\t.link_info_changed              = ath11k_mac_op_bss_info_changed,' +
+        '\n\t.vif_cfg_changed                = diting_ath11k_vif_cfg_changed,')
+    (gen / 'mac.c').unlink(); (gen / 'mac.c').write_text(mac_source)
     mac = (shared / 'src/nw_mac80211.c').read_text()
     mac += r"""
 /* Linux ath11k still uses these mac80211 APIs; the shared station has one
@@ -107,7 +167,7 @@ void ieee80211_queue_work(struct ieee80211_hw *hw, struct work_struct *work) { i
     common = out / 'common.h'
     if common.exists() or common.is_symlink(): common.unlink()
     common.symlink_to(linux / 'drivers/bus/mhi/common.h')
-    env = dict(os.environ, DEVELOPER_DIR=str(diting_paths.developer_dir()))
+    env = build_env()
     clang = subprocess.check_output(['xcrun', '-f', 'clang'], env=env, text=True).strip()
     resource = subprocess.check_output([clang, '-print-resource-dir'], text=True).strip() + '/include'
     overlay = ROOT / 'drivers/DitingWifi/ath11k/compat'
@@ -129,9 +189,18 @@ void ieee80211_queue_work(struct ieee80211_hw *hw, struct work_struct *work) { i
     end = sta.index('static void derive_ptk(void)', begin)
     sta = sta[:begin] + 'extern void DitingWifiRandom(void *, size_t);\nstatic void make_nonce(u8 *out) { DitingWifiRandom(out, 32); }\n' + sta[end:]
     (out / 'nw_sta_diting.c').write_text(sta)
+    # Preserve the user's no-checksum policy in the shared loader too.
+    runtime = (shared / 'shim/src/lx_rt.c').read_text()
+    begin = runtime.index('  static int settled;\n', runtime.index('int lx_request_firmware('))
+    end = runtime.index('  *fw = f;', begin)
+    runtime = runtime[:begin] + runtime[end:]
+    (out / 'lx_rt_diting.c').write_text(runtime)
     common_sources = ['src/nw_crypto.c', 'src/nw_mac80211.c', 'src/nw_net.c', 'src/nw_pci.c',
         'src/nw_qrtr.c', 'src/nw_qrtr_mhi.c', 'src/nw_sta.c', 'shim/src/lx_rt.c', 'shim/src/mhi_hook.c']
-    jobs += [((out / 'nw_sta_diting.c') if n == 'src/nw_sta.c' else (out / 'nw_mac80211_diting.c') if n == 'src/nw_mac80211.c' else shared / n, out / ('shared_' + Path(n).stem + '.o'), []) for n in common_sources]
+    replacements = {'src/nw_sta.c': out / 'nw_sta_diting.c',
+                    'src/nw_mac80211.c': out / 'nw_mac80211_diting.c',
+                    'shim/src/lx_rt.c': out / 'lx_rt_diting.c'}
+    jobs += [(replacements.get(n, shared / n), out / ('shared_' + Path(n).stem + '.o'), []) for n in common_sources]
     jobs += [(linux / ('drivers/soc/qcom/' + n + '.c'), out / (n + '.o'), []) for n in ('qmi_interface', 'qmi_encdec')]
     jobs += [(ROOT / 'drivers/DitingWifi/ath11k/DitingAth11k.c', out / 'DitingAth11k.o', [])]
     commands = []
@@ -148,6 +217,7 @@ void ieee80211_queue_work(struct ieee80211_hw *hw, struct work_struct *work) { i
     linked = out / 'ath11k-combined.o'
     subprocess.run(['xcrun', 'ld', '-r', '-arch', 'arm64', *[str(o) for _, o, _ in jobs], '-o', str(linked)], env=env, check=True)
     nm = diting_paths.tool('llvm-nm', 'DITING_LLVM_NM', ('/opt/local/bin/llvm-nm-mp-18',))
+    objcopy = diting_paths.tool('llvm-objcopy', 'DITING_LLVM_OBJCOPY', ('/opt/local/bin/llvm-objcopy-mp-18',))
     undefined = subprocess.check_output([nm, '-u', '-j', str(linked)], text=True).splitlines()
     (out / 'undefined-symbols.txt').write_text('\n'.join(undefined) + '\n')
     allowed = {'_DitingWifiRandom','_bzero','_memcmp','_memcpy','_memmove','_memset','_snprintf','_strchr','_strcmp','_strlen','_strncmp','_strncpy','_strtoul','_vsnprintf'}
@@ -159,9 +229,7 @@ void ieee80211_queue_work(struct ieee80211_hw *hw, struct work_struct *work) { i
     renames = {n: '_diting11_' + n[1:] for n in defined if not n.startswith('_nw_wifi_') and n not in exports}
     mapping = out / 'symbol-map.txt'; mapping.write_text(''.join(k + ' ' + v + '\n' for k, v in renames.items()))
     namespaced = out / 'DitingAth11k-linked.o'
-    subprocess.run([diting_paths.tool('llvm-objcopy', 'DITING_LLVM_OBJCOPY',
-                                    ('/opt/local/bin/llvm-objcopy-mp-18',)),
-                    '--redefine-syms=' + str(mapping), str(linked), str(namespaced)], check=True)
+    subprocess.run([objcopy, '--redefine-syms=' + str(mapping), str(linked), str(namespaced)], check=True)
     archive.unlink(missing_ok=True)
     subprocess.run(['xcrun', 'libtool', '-static', '-o', str(archive), str(namespaced)], env=env, check=True)
     (out / 'build-report.json').write_text(json.dumps(dict(linux='v7.0.14', shared=str(shared),

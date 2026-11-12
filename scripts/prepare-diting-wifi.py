@@ -8,6 +8,7 @@ MAC when the actual endpoint or calibration record is missing.
 import argparse
 import json
 from pathlib import Path
+import shlex
 import struct
 import subprocess
 import sys
@@ -154,6 +155,13 @@ def main():
         return subprocess.check_output(adb + ['shell', cmd], text=True).strip()
     if subprocess.check_output(adb + ['get-state'], text=True).strip() != 'recovery':
         raise RuntimeError('REC required')
+    product = shell('getprop ro.product.device')
+    if product.lower() != 'diting':
+        raise RuntimeError('Firmware must be captured from Diting, got ' + repr(product))
+    slot = shell('getprop ro.boot.slot_suffix')
+    if slot not in ('_a', '_b'):
+        raise RuntimeError('Cannot determine active Diting firmware slot: ' + repr(slot))
+    partition = '/dev/block/by-name/modem' + slot
     dtb = a.dtb.read_bytes() if a.dtb else subprocess.check_output(adb + ['exec-out', 'cat', '/sys/firmware/fdt'])
     pci = {}
     device = '/sys/bus/pci/devices/0000:01:00.0/'
@@ -168,8 +176,14 @@ def main():
     try:
         if not a.firmware_dir:
             mountpoint = '/mnt/diting-wifi-firmware'
-            if shell('mountpoint -q ' + mountpoint + '; echo $?') != '0':
-                shell('mkdir -p ' + mountpoint + ' && mount -t vfat -o ro /dev/block/by-name/modem_a ' + mountpoint)
+            mounted = [line.split() for line in shell('cat /proc/mounts').splitlines()
+                       if len(line.split()) > 3 and line.split()[1] == mountpoint]
+            if mounted:
+                target = shell('readlink -f ' + shlex.quote(partition))
+                if shell('readlink -f ' + shlex.quote(mounted[0][0])) != target or 'ro' not in mounted[0][3].split(','):
+                    raise RuntimeError('Existing firmware mount does not match active read-only Diting modem')
+            else:
+                shell('mkdir -p ' + mountpoint + ' && mount -t vfat -o ro ' + partition + ' ' + mountpoint)
                 owned_mount = True
             subprocess.run(adb + ['pull', profile['firmware']['device_path'] + '/.', str(firmware)], check=True)
         for name in profile['firmware']['required']:
@@ -177,6 +191,9 @@ def main():
         inventory = [dict(name=f.name, bytes=f.stat().st_size) for f in sorted(firmware.iterdir()) if f.is_file()]
         if not any(f['name'].startswith('bdwlan.') for f in inventory): raise RuntimeError('Missing board data')
         (out / 'local-inputs.json').write_text(json.dumps(dict(firmware_directory=str(firmware), files=inventory,
+            source=dict(product=product, serial=a.serial, slot=slot,
+                        partition=partition if not a.firmware_dir else None,
+                        capture='REC read-only active modem' if not a.firmware_dir else 'external local directory'),
             profile=profile, image_verification='skipped by request', calibration_modified=False), indent=2) + '\n')
         destination = a.profile or out / 'board.json'
         destination.parent.mkdir(parents=True, exist_ok=True)
