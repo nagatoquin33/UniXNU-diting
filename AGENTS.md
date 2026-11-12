@@ -970,3 +970,19 @@ work is the boot itself, not the inputs.
 - 观察：新 kernel `7434c82fb15c61ec0037bdb7b480a1c92fc708bfb759a91d9b3ca49e77b93d6d`（73,719,808 B）；`__PRELINK_INFO` 26 entries，含 `IOGPUFamily`（旧 kernel 22 entries 无）；`pc=0xfffffff00be106c8` 处 32 B = `fd7bbfa9fd030091219efff021940291427600d042ec47f90311805221320094`，与原始 22H374 cache 同地址**逐字节相同**；镜像 A metal=1 `db99450bb23b69f981617a246f4f231b0e20a0fc4b0fe3e95a759c02932b7679`、B metal=0 `414f6cb0406715b2fbaefa900cb1ddcec7d0618dd3d20f557195ea7fb30306d9`（均 101,187,584 B），contract PASS、storage PASS、CRC/manifest true；A 与旧 C5 在 config/manifest 层单变量：args value sha256 `154eca67…` 相同、manifest `bf6d864c…` 相同、kernel 槽相同，只有 payload kernel 变。脚本顺带修了一个确定性缺陷：payload work 目录取核心"当前配置"，配置漂移到 bring-up 时会读旧 payload；现在 payload 前显式 `unixnu defconfig diting_ipados18_defconfig`。镜像 `hardware_tested=false`；A/B 上机后是否还 panic、是否出现 `DITING METAL: real IOAcceleratorES provider published` **未观察**。
 - 结论：E1 在离线层面复现并修复了 C5 的零填充地址（新 kernel 同地址 32 B 与原始组件逐字节相同），并给出 A/B 单变量镜像；这仍是离线证据，不等于 C5 已在真机修复。本 E1 就是随后的 C10 提交（脚本 + 本段）。
 - 下一步：真机按 A（metal=1）→ B（metal=0）顺序 `fastboot boot`（RAM-only，需用户在场与授权），观察是否仍出现 `pc=0xfffffff00be106c8 instr=0 @sleh.c:1215` 以及是否出现 `DITING METAL: real IOAcceleratorES provider published`；镜像哈希跨运行不可复现，核对 manifest 与结构即可。
+
+## E1a — E1 A 镜像真机首轮：Metal 修复证实，root 挂载 panic（ufs 节点缺失）
+
+- 输入：E1 A（metal=1）`db99450bb23b69f981617a246f4f231b0e20a0fc4b0fe3e95a759c02932b7679`（101,187,584 B，内嵌 kernel `7434c82f…`）；设备 `9e0c2b55`，battery 4258 mV；证据 `build-work/device-runs/2026-11-12-e1a/`（含两张用户照片）。
+- 命令：`fastboot -s 9e0c2b55 boot <e1a img>`（RAM-only；无 flash/erase/dd）。
+- 观察：bootloader OKAY；+20 s 离开 fastboot 持续运行；屏幕（照片转录，右缘截断标 …）依次出现 `DITING METAL: real IOAcceleratorES provider published`、`DITING METAL: NativeAdreno complete runtime publication status…`、EPSS 八核变频行，随后 ~40× `rootvnode is not set` → `Still waiting for root device` → `panic(cpu 0): Failed to mount root device @IOKitBSDInit.cpp:996`。
+- 结论：E1 修复在真机证实——`instr=0 @sleh.c:1215` 不再出现，Metal/IOAcceleratorES 发布成功；新阻塞在 root 挂载。归因（离线）：payload ADT blob 1 缺 `/device-tree/arm-io/ufshc`——`build-release-image-linux.py` 调 `finalize-diting-adt.py` 漏传 `--ufs-probe`（CI `package.yml:458` 必传，构建日志记 `ufs_probe:false`）→ NativeUfs 无 `diting,ufs-*` 可匹配 → 无 IOMedia。非硬件故障、非资源竞争。三个窗口 UUID 已排除（与真机一致）。屏幕证据以用户照片转录，右缘截断处未读全。
+- 下一步：E2 修复镜像上机验证 `DITING_UFS: matched SM8475` → clocks/transport → APFS 根卷发布。
+
+## E2 — release ADT 补 ufshc 节点：修复 root-mount 路径（未上机）
+
+- 输入：E1a 根因链（见上）；`scripts/build-release-image-linux.py` finalize 调用追加 `--ufs-probe` 一行（与 CI 契约一致、无条件）；证据 `build-work/evidence-20261112-ufs-adt/`。
+- 命令：与 E1 `build-images.sh` 相同参数重建两变体（`--prelink-kernel`、同 relink kernel `7434c82f…`、cpus=8、metal=1/0），输出到新目录。
+- 观察（全离线）：`finalize-*.log` 记 `"ufs_probe": true`；blob 1 = 16,536 B，含 `/device-tree/arm-io/ufshc` 全套 Diting 属性（`ufs-hc-base 0x1d84000`、`gcc-ufs-page 0x187000`、`smmu-base 0x15000000`、`smmu-stream-id 0xe0`、`context-banks 0x4e`、`match-groups 0x78`、`ufs-spi 0x109`、userdata LBA `0x2f8a00-0x3adf3fa`）；`root-matching` UUID `B07DF049…`、`diting-touch`/`diting-buttons`/`boot-epoch` 不变；contract PASS、storage PASS、`structure_matches_b1_kernel_slot: true`。镜像：metal=1 `6b0f53c45e32d9263996e9388b715519aadc7cf9aad2b1ca53beabad67299c75`、metal=0 `cf007f172bcd43c1c87abc53da4e4447f2cacc9d4ac4d4aa947994cb9b318f7c`（均 101,187,584 B）。`hardware_tested=false`。
+- 结论：离线层面 root-mount 缺件已补齐；是否恢复挂载仍需 E2a 真机确认，不预先声称。
+- 下一步：设备回 fastboot、用户在场后 `fastboot boot` metal=1 镜像，用 Advanced Logger/ramoops 取证 `DITING_UFS:`/SHNGROOT/APFS 行；若根卷发布成功，再继续 Metal 结果验证与 WiFi/多核/触摸各单变量轮。

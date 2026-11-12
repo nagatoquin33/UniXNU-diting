@@ -415,7 +415,7 @@ def main():
         finalize = [sys.executable, str(device / 'scripts/finalize-diting-adt.py'),
                     '--work-dir', str(work), '--unique-chip-id', seed_hex,
                     '--cpus', str(cpus), '--hardware-dtb', str(dtb_path),
-                    '--volume-layout', str(args.volume_layout)]
+                    '--volume-layout', str(args.volume_layout), '--ufs-probe']
         completed = run_logged(finalize, device, env, logs / f'finalize-{variant}.log')
         # finalize prints its record (it names the seed): keep a redacted copy.
         (logs / f'finalize-{variant}.log').write_text(redact(completed.stdout, seed))
