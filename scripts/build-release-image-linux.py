@@ -66,6 +66,72 @@ MAGIC = b'PONGFAT1'
 ENVELOPE_HEADER = 4096
 DEFAULT_ARGS = ('diting_usb=0', 'diting_wifi=1', 'diting_adreno_start=1',
                 'diting_metal=1', 'diting_ui_software=0', 'diting_software_ui=0')
+# The library-only policy scripts/build-ipados18-prelinked-boot.py:36-45 uses for
+# this board: base library components, plus the IOGPU closure when Adreno runs.
+BASE_LIBRARY = {'com.apple.driver.AppleARMWatchdogTimer', 'com.apple.driver.AppleARMPlatform',
+                'com.apple.driver.ApplePMGR', 'com.apple.driver.AppleEffaceableStorage',
+                'com.apple.driver.AppleMobileFileIntegrity'}
+GPU_LIBRARY = {'com.apple.iokit.IOGPUFamily', 'com.apple.iokit.IOSurface',
+               'com.apple.iokit.IOReportFamily', 'com.apple.iokit.IOSlowAdaptiveClockingFamily'}
+
+
+def prelink_release_kernel(native, kernelcache, roots, slide, out_dir, iogpu):
+    """Re-prelink the existing release XNU aggregate with the board's kext closure.
+
+    The shared kernel step prelinks only board.toml [kernel.prelink].roots, and
+    the pinned kit has no library-only policy, so the release kernel carried no
+    com.apple.iokit.IOGPUFamily code. With diting_metal=1 the generated
+    DitingIOAcceleratorMetaConstruct binding lands on that component's
+    __TEXT_EXEC bytes, which were therefore zero-fill (C5 panic: instr=0 at
+    pc=0xfffffff00be106c8). This repeats scripts/build-ipados18-prelinked-boot.py's
+    qualified recipe on the current Linux path: when Adreno is enabled, add
+    IOGPUFamily to the roots and prelink IOGPUFamily + its closure library-only.
+    """
+    sys.path.insert(0, str(DEVICE / 'kits/NativePrelink'))
+    from emit_prelink import emit           # noqa: E402  (device kit, has library_only)
+    from native_prelink import arm64_image, plan  # noqa: E402
+    native_data = Path(native).read_bytes()
+    original_data = arm64_image(Path(kernelcache).read_bytes())
+    roots = list(roots)
+    library = set(BASE_LIBRARY)
+    if iogpu:
+        roots.append('com.apple.iokit.IOGPUFamily')
+        library |= GPU_LIBRARY
+    closure = plan(native_data, original_data, roots, slide, verify_images=False)
+    library &= set(closure['components'])
+    candidate, selection = emit(native_data, original_data, roots, slide,
+                                verify_images=False, library_only_components=library)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    target = out_dir / ('kernel-iogpu.macho' if iogpu else 'kernel-release.macho')
+    target.write_bytes(candidate)
+    (out_dir / (target.stem + '.selection.json')).write_text(
+        json.dumps(selection, indent=2, sort_keys=True) + '\n')
+    report = {'native': str(native), 'native_sha256': hashlib.sha256(native_data).hexdigest(),
+              'kernelcache': str(kernelcache), 'slide': hex(slide), 'iogpu': iogpu,
+              'roots': roots, 'components': selection['components'],
+              'library_only_components': selection['library_only_components'],
+              'codeless_components': selection['codeless_components'],
+              'kernel_interfaces': selection['kernel_interfaces'],
+              'candidate': str(target), 'candidate_bytes': len(candidate),
+              'candidate_sha256': hashlib.sha256(candidate).hexdigest()}
+    return target, report
+
+
+def merge_overrides(cpus, extra):
+    """Combine the per-variant CPU count, the release defaults and --arg overrides.
+
+    A later value for the same NAME replaces the earlier one while keeping its
+    position, so `--arg diting_wifi=0` really turns the default wifi=1 off
+    instead of emitting a duplicate key (PE_parse_boot_argn selects the first
+    duplicate, so a duplicate would silently win).
+    """
+    merged = {}
+    for item in (f'cpus={cpus}', *DEFAULT_ARGS, *extra):
+        key, separator, _value = item.partition('=')
+        if not separator or not key:
+            raise SystemExit(f'boot argument must be NAME=VALUE: {item}')
+        merged[key] = item
+    return list(merged.values())
 
 
 def sha256_file(path):
@@ -192,6 +258,18 @@ def main():
                         help='UniXNU checkout (default: board.toml [package].unixnu)')
     parser.add_argument('--kernel', type=Path,
                         help='release kernel.macho (default: <core>/out/diting/<os>/<config>/kernel/kernel.macho)')
+    parser.add_argument('--prelink-kernel', action='store_true',
+                        help='re-prelink the existing release XNU aggregate with the board kext '
+                             'closure: when Adreno is enabled, add com.apple.iokit.IOGPUFamily to '
+                             'the roots and prelink IOGPUFamily + its closure library-only '
+                             '(scripts/build-ipados18-prelinked-boot.py:36-45). Reuses the built '
+                             'aggregate; XNU is not relinked from scratch')
+    parser.add_argument('--native-kernel', type=Path,
+                        help='native XNU aggregate for --prelink-kernel (default: <work>/tree/build/'
+                             'xnu/ios-obj/DEVELOPMENT_ARM64_<machine>/mach.development.diting)')
+    parser.add_argument('--kernelcache', type=Path,
+                        help='original decompressed kernelcache for --prelink-kernel '
+                             '(or DITING_KERNELCACHE / UNIXNU_KERNELCACHE)')
     parser.add_argument('--b1-image', type=Path,
                         help='B1 image carrying the B1 ADT (seed) and the plan 3B DTB '
                              '(or DITING_B1_IMAGE)')
@@ -252,6 +330,52 @@ def main():
     images.mkdir(parents=True, exist_ok=True)
     logs.mkdir(parents=True, exist_ok=True)
 
+    cpus_list = [int(value) for value in args.cpus.split(',') if value.strip()]
+    overrides_by_cpus = {cpus: merge_overrides(cpus, args.arg) for cpus in cpus_list}
+
+    # The payload step's work directory is the core's *current* configuration
+    # (out/<device>/<os>/<configuration>). Make the release configuration
+    # explicit here instead of inheriting whichever config the core last ran,
+    # or payload.img is read from a stale directory.
+    completed = run_logged([sys.executable, str(core / 'unixnu'), 'defconfig', config_name,
+                            '-D', str(device)], core, dict(os.environ),
+                           logs / 'defconfig.log')
+    if completed.returncode != 0:
+        print(completed.stdout[-4000:])
+        raise SystemExit(f'defconfig {config_name} failed')
+    print(f'== configuration {config_name} selected (work dir {work})')
+
+    prelink = None
+    if args.prelink_kernel:
+        machine = board.get('kernel', {}).get('machine_config', 'DITING')
+        native = args.native_kernel or (
+            work / 'tree' / 'build/xnu/ios-obj' / f'DEVELOPMENT_ARM64_{machine}'
+            / 'mach.development.diting')
+        if not native.is_file():
+            fallback = work / 'kernel' / 'mach.development.diting'
+            native = fallback if fallback.is_file() else native
+        if not native.is_file():
+            parser.error(f'--native-kernel: {native} is not a file')
+        kernelcache = (args.kernelcache or os.environ.get('DITING_KERNELCACHE')
+                       or os.environ.get('UNIXNU_KERNELCACHE'))
+        if not kernelcache:
+            parser.error('--prelink-kernel needs --kernelcache or DITING_KERNELCACHE/UNIXNU_KERNELCACHE')
+        kernelcache = Path(kernelcache).expanduser().resolve()
+        if not kernelcache.is_file():
+            parser.error(f'--kernelcache: {kernelcache} is not a file')
+        iogpu = any('diting_adreno_start=1' in overrides
+                    for overrides in overrides_by_cpus.values())
+        kernel, prelink = prelink_release_kernel(
+            native.resolve(), kernelcache, board['kernel']['prelink']['roots'],
+            int(board['kernel']['prelink']['slide'], 0), out / 'kernel', iogpu)
+        kernel = kernel.resolve()
+        print(json.dumps({'prelink': {'kernel': str(kernel),
+                                      'sha256': prelink['candidate_sha256'],
+                                      'iogpu': iogpu,
+                                      'components': len(prelink['components']),
+                                      'library_only_components':
+                                          len(prelink['library_only_components'])}}, indent=2))
+
     stock = b1_inputs(args.b1_image.resolve())
     seed = stock['seed']
     seed_hex = '%016x' % seed
@@ -263,6 +387,7 @@ def main():
 
     summary = {'device': str(device), 'core': str(core), 'work_dir': str(work),
                'kernel': {'path': str(kernel), 'bytes': kernel.stat().st_size, 'sha256': sha256_file(kernel)},
+               'prelink': prelink,
                'b1_image': {'path': str(args.b1_image.resolve()), 'sha256': sha256_file(args.b1_image.resolve())},
                'fd': {'path': str(args.fd.resolve()), 'sha256': sha256_file(args.fd.resolve())},
                'shim': {'path': str(args.shim.resolve()), 'sha256': sha256_file(args.shim.resolve())},
@@ -270,9 +395,9 @@ def main():
                'seed_source': 'B1 payload ADT /chosen unique-chip-id (value not recorded)',
                'hdiutil_used': False, 'variants': {}}
 
-    for cpus in [int(value) for value in args.cpus.split(',') if value.strip()]:
+    for cpus in cpus_list:
         variant = f'release-v4-cpus{cpus}'
-        overrides = [f'cpus={cpus}', *DEFAULT_ARGS, *args.arg]
+        overrides = overrides_by_cpus[cpus]
         print(f'== {variant}: payload step')
         command = [sys.executable, str(core / 'unixnu'), 'build', 'payload',
                    '-D', str(device), '--kernel', str(kernel)]

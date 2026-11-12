@@ -928,3 +928,45 @@ work is the boot itself, not the inputs.
 - 观察：两个 v4 镜像均 101,187,584 B：cpus8 `36bdd2738e34d85807ae457eaf42c99a0fd3990128c8a9e3ccef0bd698869cd2`、cpus1 `4701c1e6688b99293ebb8572713e4abae61d1bc9bf7982dec76eae2ba5e81219`；`check-loader-adt-contract.py` 两个都 PASS，`check-storage-bindings.py` 对 release kernel `339d2760…` PASS；kernel 槽 509,684 B 与 B1 镜像逐字节相同（gzip(112 B BootShim + FD) + DTB）；PONGFAT1 CRC cpus8 `0x377d5c20`、cpus1 `0x7bd7d642`；manifest SHA-384 == ADT `boot-manifest-hash`；ADT 只有 diting token（无 `pong-*`）；boot args 856 字符，含 `cpus=8|1`、`diting_usb=0`、`diting_wifi=1`、`diting_adreno_start=1`、`diting_metal=1`、`diting_ui_software=0`、`diting_software_ui=0`。hdiutil 映射：release 链里唯一的 hdiutil 调用是 `UniXNU/scripts/unixnu/payload.py:91` 的 `skip_setup_seed()`（仅 `--skip-setup` + `--data-ramdisk` 时触发），OS/Data/userdata 那些 hdiutil 步骤属于 `userdata`/`runtime` 的 OPTIONAL_STEPS，release 不跑（`cli.py:12-13`）。platform seed 只在运行期从 B1 ADT `/chosen unique-chip-id` 读取，经 `--unique-chip-id`/`UNIXNU_UNIQUE_CHIP_ID` 传递，日志已 redact，未写入任何仓库文件或证据文件。
 - 结论：纯 Linux（WSL Ubuntu-26.04）可以产出 boot-only RELEASE v4 镜像，全程没有调用 hdiutil，也不需要 macOS；合约检查、存储绑定检查、结构对照都通过。**镜像不是跨运行可复现的**：`scripts/make-diting-adt-ipados18.py:197` 的 `boot-epoch = int(time.time())`、`:175` 的 `BNCH = sha384(os.urandom(32))`、`:178` 的 `random-seed = os.urandom(64)` 让 ADT 每次不同；`repro-compare.json` 两次连续构建显示 kernel 槽、payload 内 kernel、`pong-boot-manifest.json`、`unixnu.toml` 完全相同，只有 `boot-epoch`/`random-seed`/`BNCH` 不同。验收判据是 manifest SHA-384 + 结构 + 两个 checker，不是镜像哈希跨运行相等。`hardware_tested=false`，真机未观察。
 - 下一步：若需要可复现镜像，给 `make-diting-adt-ipados18.py` 增加固定的 `--boot-epoch`/`--random-seed` 入口（本轮不做，超出 C9 范围）；设备候选仍是 B1 族的 `285e6afa…`/`d416a29c…`/`9c0100bb…`，不是这些 release 镜像。
+
+# 2026-11-12 18:44—22:42 — 首轮真机（C1/C0/C4/C5）与 IOGPUFamily 预链接修复（E1）
+
+## C1 — B1 修正镜像首次真机启动：到达 iOS 主屏幕（Diting 首次），触摸未达成
+
+- 输入：`build-work/b1-darwinboot24/diting-unixnu-uefi-darwinboot24.img` 101,187,584 B sha256 `285e6afa1f4291f10839619fbc06d09ce08842ac14d7143be20756d4c8f106fa`（FD `c6b6c43c…`、BootShim `9fad1c8c…`、DTB `ef77a551…`）；设备 `9e0c2b55`，product=diting、slot=a、unlocked=yes、battery 4032 mV；证据 `build-work/device-runs/2026-11-12-c1/`。
+- 命令：`fastboot -s 9e0c2b55 boot <img>`（RAM-only；本轮没有 flash/dd/erase，没有写分区，没有拍屏）。
+- 观察：`Sending 'boot.img' (98816 KB) OKAY` / `Booting OKAY` / total 2.714 s，exit 0；设备离开 fastboot 后持续运行（44 s、76 s、2/4.5/24/28 min 复查 adb/fastboot 均无设备，未自行重启回 fastboot）；在场者 19:07 报读滚动内核日志（XNU console 在滚），19:12 报读 `Denied attempt to escape CPU monitor (missing required entitlement)`（22H374 `lsd` 缺可选 entitlement，良性、非 panic），19:17 报读 **iOS 主屏幕与应用图标**；触摸无反应；没有看到 `BOOT FAILED`。`DARWINBOOT24 REQUEST` 横幅原文、`DITING_*` / cache loader / persona 原文、Advanced Logger 导出、电量/亮度数值均 **未观察**。
+- 结论：G4（SpringBoard 渲染）首次在 Diting 上被用户直接观察；G2/G3 只能从"console 滚动 + 用户态 lsd 日志 + 主屏幕"推断通过，原文未观察；G5 未达成（触摸无反应）；本轮不能证明任何驱动（WiFi/GPU/Metal/多核/音频）工作。
+- 下一步：C0 识别触摸 IC（已完成，见下），C4 按结论修驱动。
+
+## C0 — TWRP 只读硬件识别：Goodix Berlin-D/GT9916 确认，功放未能识别
+
+- 输入：TWRP `build-work/diting-recovery-boot.img` 127,148,032 B sha256 `67cf2dc9d247815bc5be8c33f4c717b5833f13ca93a4d371ce796bfa0c3c2d6a`；设备 `9e0c2b55`；只读，未 mount/backup/reboot/sideload，未写分区；证据 `build-work/device-runs/2026-11-12-c0/`。
+- 命令：`fastboot -s 9e0c2b55 boot <TWRP>`；`adb shell cat /proc/bus/input/devices`；`adb shell dmesg`（设备侧带引号的 grep 被 TWRP 的 sh 分词破坏，改为主机侧过滤，等价且不写设备）；`cat /proc/asound/cards`；`getprop ro.product.device`。
+- 观察：`goodix_ts` probe 成功；dmesg 原文 `ic type is BerlinD`、`rom_pid:BERLIN`、`pid:9916`、固件 `goodix_firmware_l12`（配置组 `goodix_cfg_group_l12`）、`config_id: 0x631B5025`、`panel_x/y: 1220/2712`、`panel_max_x/y: 12200/27120`、`IRQ:363`、`avdd-gpio[372]`/`reset-gpio[321]`/`irq-gpio[322]`（内核全局号；按 tlmm base 301 折算为 DT 的 71/20/21，base 301 是推断而非本轮直接读出）、SPI `0x990000`；`[ FTS ] TP is goodix` 明确排除 FTS；`/proc/asound/cards` = `--- no soundcards ---`，dmesg 没有 `cs35l41`/`wsa883`/`cirrus` 行。
+- 结论：触摸 IC = **Goodix Berlin-D（GT9916）**，不需要写 FTS 驱动；现有 `bsd/dev/diting_goodix.c`（Goodix Berlin-D，Pong 移植）家族方向正确，C4 应按 GT9916/Berlin-D 的固件名、config_id、1220×2712 对齐。功放 **未能识别**（TWRP recovery 未加载音频 codec；`no soundcards` 不等于"没有功放"，CS35L41 vs WSA883x 仍未定）。设备当时仍在 TWRP，回 fastboot 需用户手动按键。
+- 下一步：C4 触摸驱动按 C0 结论修；功放需 Android 侧或带 codec 的内核再确认。
+
+## C4 — Goodix 电源/TCS4 修复镜像首轮：再次到主屏幕，触摸仍未恢复（未归因）
+
+- 输入：`build-work/evidence-20261112-touch/image/diting-unixnu-uefi-c4-touch.img` 101,187,584 B sha256 `cd4e5bd47c8b16987beca49e3fb9bdf1cdc658eddb8484c444a5f794c191441e`（bring-up kernel + Goodix IOVDD ldoc2/GPIO71/TCS4/panel-max 修复；FD `c6b6c43c…`、DTB `ef77a551…`、PONGFAT1 CRC `0x8ba37e54`、args 39 token 含 `diting_touch=1`/`diting_buttons=1`，不含 wifi/adreno/metal）；设备 `9e0c2b55`，battery 4237 mV；证据 `build-work/device-runs/2026-11-12-c4/`。
+- 命令：`fastboot -s 9e0c2b55 boot <c4 img>`（RAM-only；没有 flash/dd/erase）。
+- 观察：`Sending 'boot.img' (98816 KB) OKAY` / `Booting OKAY`，exit 0；+43/64/94 s 复查 adb/fastboot 均无设备，未自行重启；用户 22:20 报读：handoff 正常、**到达 iOS 主屏幕（有图标）**、**触摸仍无反应**、未报告 panic 或 `BOOT FAILED`（按"未上报"记录，不等于没有发生）。`Diting touch:` / `goodix:` console 行、触摸失败的具体阶段（电源 / GENI / IC_INFO / kernel→backboardd bridge）**未观察**。
+- 结论：C4 的驱动修复 **没有恢复触摸**（did not restore touch）；在拿到 touch console 行前不归因、不回退驱动改动。G4 再次由用户观察通过（C4 内核）；G5 仍未达成。
+- 下一步：取 `Diting touch:` / `goodix:` 行（Advanced Logger 或下一轮屏幕报读），按 `evidence-20261112-touch/README.md` 的决策树定位。
+
+## C5 — release 全开镜像首轮：panic `Undefined kernel instruction`（IOGPUFamily 未预链接）
+
+- 输入：`build-work/evidence-20261112-release-image/images/release-v4-cpus8.img` 101,187,584 B sha256 `36bdd2738e34d85807ae457eaf42c99a0fd3990128c8a9e3ccef0bd698869cd2`（release kernel `339d2760…` 73,666,560 B；args 42 token：cpus=8、wifi=1、adreno=1、metal=1、usb=0、ui/software UI=0）；设备 `9e0c2b55`，battery 4177 mV；证据 `build-work/device-runs/2026-11-12-c5/`。
+- 命令：`fastboot -s 9e0c2b55 boot <img>`（RAM-only）。本轮 **不是单变量**：内核、cpus=8、wifi、adreno、metal、UI 路径同时改变。
+- 观察：bootloader OKAY；设备持续运行、未自行重启回 fastboot；屏幕 panic（用户照片经 lead 转录，hex 按近似）：`panic(cpu 7 caller 0xfffffff0089b72ab8): Undefined kernel instruction: pc=0xfffffff00be106c8 instr=0 @sleh.c:1215`；紧邻之前是 DITING ADRENO 序列，最后一条 `CP ready: authenticated nonsecure fence result=0 a=0x1 b=0x147de9`（各条 result 全为 0）。离线根因（用户指出、E1 复核）：旧 release kernel 在该 pc 的 `__PLK_TEXT_EXEC` 32 B 全零、`__PRELINK_INFO` 22 entries 没有 `IOGPUFamily`；原始 22H374 kernelcache 在 `pc-slide`（slide 0x5ed0000）是有效 ARM64 指令，owner = `com.apple.iokit.IOGPUFamily __TEXT_EXEC` → `diting_metal=1` 时 `DitingIOAcceleratorMetaConstruct` 落到零填充。
+- 结论：panic 的直接原因是没有预链接 `IOGPUFamily` 的 kernel（`instr=0`），不是 8 核或 WiFi 本身；但本轮非单变量，WiFi/GPU 的其它问题不能排除。真机现象已观察；`slide=` / 符号化 caller 原文未取得，panic hex 按近似记录。
+- 下一步：用 E1 的 `--prelink-kernel` 出 A（metal=1）/ B（metal=0）对照镜像再上机，单变量确认 panic 是否消失。
+
+## E1 — release kernel 预链接 IOGPUFamily（C5 panic 修复；未上机）
+
+- 输入：E1 前脚本 `9f6cf2ec…`；新脚本 `scripts/build-release-image-linux.py` sha256 `1e0234195faffb872c6887295c308d8246d657caf8d9a48692ab2c1d210ab0d6`（+127/−2）；核心 `xnu-ci-core` @ `0ce9779`；release native aggregate `0477ce0a…`（39,723,432 B，复用，不重链 XNU）；原始 kernelcache `aa65c36c…`（48,562,176 B）；证据 `build-work/evidence-20261112-prelink-iogpu/`。
+- 命令：`python3 scripts/build-release-image-linux.py --prelink-kernel --core <core> --kernelcache <aa65c36c…> --cpus 8 …`（完整显式参数与 `--arg diting_metal=0` 的 B 变体见证据 `build-images.sh`）；随后沿用 payload/finalize/bootimg 流程出图。
+- 观察：新 kernel `7434c82fb15c61ec0037bdb7b480a1c92fc708bfb759a91d9b3ca49e77b93d6d`（73,719,808 B）；`__PRELINK_INFO` 26 entries，含 `IOGPUFamily`（旧 kernel 22 entries 无）；`pc=0xfffffff00be106c8` 处 32 B = `fd7bbfa9fd030091219efff021940291427600d042ec47f90311805221320094`，与原始 22H374 cache 同地址**逐字节相同**；镜像 A metal=1 `db99450bb23b69f981617a246f4f231b0e20a0fc4b0fe3e95a759c02932b7679`、B metal=0 `414f6cb0406715b2fbaefa900cb1ddcec7d0618dd3d20f557195ea7fb30306d9`（均 101,187,584 B），contract PASS、storage PASS、CRC/manifest true；A 与旧 C5 在 config/manifest 层单变量：args value sha256 `154eca67…` 相同、manifest `bf6d864c…` 相同、kernel 槽相同，只有 payload kernel 变。脚本顺带修了一个确定性缺陷：payload work 目录取核心"当前配置"，配置漂移到 bring-up 时会读旧 payload；现在 payload 前显式 `unixnu defconfig diting_ipados18_defconfig`。镜像 `hardware_tested=false`；A/B 上机后是否还 panic、是否出现 `DITING METAL: real IOAcceleratorES provider published` **未观察**。
+- 结论：E1 在离线层面复现并修复了 C5 的零填充地址（新 kernel 同地址 32 B 与原始组件逐字节相同），并给出 A/B 单变量镜像；这仍是离线证据，不等于 C5 已在真机修复。本 E1 就是随后的 C10 提交（脚本 + 本段）。
+- 下一步：真机按 A（metal=1）→ B（metal=0）顺序 `fastboot boot`（RAM-only，需用户在场与授权），观察是否仍出现 `pc=0xfffffff00be106c8 instr=0 @sleh.c:1215` 以及是否出现 `DITING METAL: real IOAcceleratorES provider published`；镜像哈希跨运行不可复现，核对 manifest 与结构即可。
