@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
-"""从现有启动镜像生成仅调整 AppleARMCPU 匹配项的诊断镜像。"""
+"""DEPRECATED — 从现有启动镜像生成仅调整 AppleARMCPU 匹配项的诊断镜像。
+
+Nothing in the build chain calls this script. The AppleARMCPU personality fix
+it produced by hand is now applied to the prelink metadata itself:
+scripts/install-unixnu-inputs.py fix_apple_cpu_match patches the core
+XnuPrelink emit_prelink.py before the release prelink (the same patch
+kits/DitingPlatform24/build-with-runtime.py stages for local builds), so the
+emitted image no longer carries the competing AppleARMCPU match. Retained as a
+reference for the retired diagnostic path; it still imports kits/NativePrelink
+helpers.
+"""
 import argparse
 import json
 import os

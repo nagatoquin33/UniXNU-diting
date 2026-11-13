@@ -158,7 +158,32 @@ if [ ${#PATCHES[@]} -eq 0 ]; then
   exit 1
 fi
 if [ "$XNU_VERSION" = "10063.141.1" ]; then
-  PATCHES+=("$ROOT"/kits/NativePrelink/patches/*.patch)
+  # The Darwin 23 prelink patch set moved to the core XnuPrelink kit
+  # (kits/XnuPrelink/patches/xnu-10063.141.1-*.patch); the retired
+  # kits/NativePrelink copy no longer carries it. The build tree links only the
+  # device's own kits, so resolve the checkout the way scripts/package.sh does:
+  # board.toml [package].unixnu relative to the real device repository. Darwin
+  # 24 builds never enter this branch; they take the sparse-index ABI from
+  # patches/xnu-ipados18/0001-diting-darwin24.patch instead.
+  XNU_PRELINK_KIT=$(python3 - <<'PY'
+import os
+import sys
+import tomllib
+from pathlib import Path
+for base in (os.environ.get('DITING_NATIVE_DRIVER_SOURCE'), os.environ.get('UNIXNU_DEVICE')):
+    if not base:
+        continue
+    board = (Path(base) / 'board.toml').resolve()
+    if not board.is_file():
+        continue
+    relative = tomllib.loads(board.read_text()).get('package', {}).get('unixnu')
+    if relative:
+        print((board.parent / relative / 'kits/XnuPrelink').resolve())
+        sys.exit(0)
+sys.exit('XNU 10063.141.1 needs the core XnuPrelink kit; board.toml [package].unixnu did not resolve it')
+PY
+)
+  PATCHES+=("$XNU_PRELINK_KIT"/patches/*.patch)
 fi
 for PATCH in "${PATCHES[@]}"; do
   if [ "$(basename "$PATCH")" = "external-archive-dependencies.patch" ] && [ -z "${XNU_EXTRA_LD_ARCHIVES:-}" ]; then

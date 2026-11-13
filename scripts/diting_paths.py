@@ -11,6 +11,7 @@ for inputs that must be present.
 import os
 import shutil
 import subprocess
+import tomllib
 from pathlib import Path
 
 DEVICE = Path(__file__).resolve().parents[1]
@@ -170,6 +171,44 @@ def unixnu_package(explicit=None):
         return found
     local = ROOT / 'package'
     return local if local.is_dir() else work_root() / 'upstream/UniXNU/package'
+
+
+def unixnu_checkout(explicit=None):
+    """The UniXNU checkout that supplies the shared core kits.
+
+    board.toml [package].unixnu names it relative to the device repository —
+    the same entry scripts/package.sh reads. Resolve through the board.toml
+    symlink so the recipe overlay (device directories linked plus copied
+    scripts) still lands on the real checkout before applying it.
+    """
+    if explicit:
+        return Path(explicit).expanduser()
+    found = _env('DITING_UNIXNU', 'UNIXNU_ROOT')
+    if found:
+        return found
+    board = (DEVICE / 'board.toml').resolve()
+    if board.is_file():
+        with board.open('rb') as handle:
+            spec = tomllib.load(handle).get('package', {}).get('unixnu')
+        if spec:
+            path = Path(spec)
+            return path if path.is_absolute() else (board.parent / path).resolve()
+    return ROOT / 'UniXNU'
+
+
+def xnu_prelink(explicit=None):
+    """The core XnuPrelink kit directory inside the UniXNU checkout.
+
+    board.toml [kernel.prelink] selects this prelinker for the release chain;
+    the device recipes import its native_prelink helpers for the same Mach-O
+    and prelink-metadata parsing instead of the retired kits/NativePrelink copy.
+    """
+    if explicit:
+        return Path(explicit).expanduser()
+    found = _env('DITING_XNU_PRELINK')
+    if found:
+        return found
+    return unixnu_checkout() / 'kits/XnuPrelink'
 
 
 def llvm_toolchain(explicit=None):

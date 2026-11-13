@@ -1,5 +1,19 @@
 #!/usr/bin/env python3
-"""Prelink matching 22H374 kexts and package them with Diting DarwinBoot24."""
+"""DEPRECATED — Prelink matching 22H374 kexts and package them with Diting DarwinBoot24.
+
+Nothing in the build chain calls this script. The release flow runs the core
+XnuPrelink kit instead: scripts/package.sh -> `unixnu release` prelinks the
+kernel through board.toml [kernel.prelink] (kits/XnuPrelink/emit_prelink.py
+with the roots and slide board.toml names), then scripts/finalize-diting-adt.py
+and scripts/build-bootimg.py assemble the flashable v4 image. The rootful
+policy moved into patches/xnu-ipados18/0003-diting-rootful-upgrade.patch plus
+the diting_rootful=1 board argument.
+
+It still imports the retained kits/NativePrelink because this flow needs
+device-only emit extensions upstream never carried (verify_images=False,
+library_only_components, diting_rootful_policy). Keep it only as a reference
+for the retired local path; do not wire it back into the release chain.
+"""
 import argparse,json,os,subprocess,sys,time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]

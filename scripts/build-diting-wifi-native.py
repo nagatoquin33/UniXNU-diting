@@ -21,12 +21,32 @@ def main():
  if not a.ath11k.is_file():raise RuntimeError('Build the matching Diting ath11k archive first: '+str(a.ath11k))
  profile=json.loads((ROOT/'configs/diting-wifi-sm8475.json').read_text())
  if profile['soc']!='SM8475' or profile['pci']['device']!=0x1103:raise RuntimeError('Diting QCA6490 profile required')
- hardware=os.environ.get('DITING_LIVE_DTB') or os.environ.get('DITING_HARDWARE_DTB')
- if hardware:
+ # The Wi-Fi PHY/pin profile only exists in the device's live tree: the format2
+ # board DTS has no qcom,pci-msm node. In the release chain the kernel recipe
+ # rewrites DITING_HARDWARE_DTB to the compiled board DTB
+ # (device-tree/build/diting/hardware.dtb in the CI work directory) for the
+ # kernel and ADT consumers, so an explicit DITING_LIVE_DTB stays the first
+ # source, then the caller-selected DITING_HARDWARE_DTB, then that same compiled
+ # DTB beside this build as the fallback. The selected path is always reported.
+ dtb,source=None,''
+ for name in ('DITING_LIVE_DTB','DITING_HARDWARE_DTB'):
+  if os.environ.get(name):
+   dtb,source=Path(os.environ[name]).expanduser(),name
+   if not dtb.is_file():raise RuntimeError(f'{source} names a missing device tree: {dtb}')
+   break
+ if dtb is None:
+  fallback=a.tree/'build/diting/hardware.dtb'
+  if fallback.is_file():dtb,source=fallback,'build tree default'
+ if dtb is None:
+  print('no hardware DTB selected; keeping the baked Diting Wi-Fi profile values')
+ else:
+  print(f'hardware DTB ({source}): {dtb}')
   spec=importlib.util.spec_from_file_location('diting_fdt',ROOT/'scripts/prepare-diting-wifi.py')
   fdt=importlib.util.module_from_spec(spec);spec.loader.exec_module(fdt)
-  nodes=fdt.fdt_nodes(Path(hardware).read_bytes())
-  host=next(v for v in nodes.values() if v.get('compatible')==b'qcom,pci-msm\0')
+  nodes=fdt.fdt_nodes(dtb.read_bytes())
+  host=next((v for v in nodes.values() if v.get('compatible')==b'qcom,pci-msm\0'),None)
+  if host is None:
+   raise RuntimeError(f'{dtb} carries no qcom,pci-msm host; set DITING_LIVE_DTB to the live device tree')
   phy=fdt.cells(host,'qcom,phy-sequence')
   if len(phy)%3:raise RuntimeError('Malformed selected Diting PHY sequence')
   profile['pcie']['phy_sequence']=[phy[i:i+3] for i in range(0,len(phy),3)]

@@ -2,7 +2,16 @@
 """Link Diting UFS to the selected Darwin 24 storage family without old addresses."""
 import argparse,json,struct,subprocess,sys
 from pathlib import Path
-ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT/'kits/NativePrelink'))
+ROOT=Path(__file__).resolve().parents[1];sys.path.insert(0,str(ROOT/'scripts'))
+import diting_paths
+# The prelink helpers come from the core XnuPrelink kit board.toml selects;
+# the retired kits/NativePrelink copy stays in this repository only as a
+# reference for the deprecated local prelink scripts.
+XNU_PRELINK=diting_paths.xnu_prelink()
+if not (XNU_PRELINK/'native_prelink.py').is_file():
+    raise SystemExit(f'XnuPrelink kit missing: {XNU_PRELINK} '
+                     '(check out the UniXNU components or set DITING_XNU_PRELINK)')
+sys.path.insert(0,str(XNU_PRELINK))
 import native_prelink as np
 p=argparse.ArgumentParser(description=__doc__);p.add_argument('--object',type=Path,required=True);p.add_argument('--output',type=Path,required=True);a=p.parse_args()
 r=json.loads((ROOT/'mac-build/storage-abi18/bindings-layout.json').read_text())

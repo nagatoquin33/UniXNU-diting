@@ -4,9 +4,37 @@ import argparse,json,os,re,shutil,struct,subprocess,sys
 from pathlib import Path
 DEVICE=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(DEVICE/'scripts'))
-sys.path.insert(0,str(DEVICE/'kits/NativePrelink'))
 import diting_paths
+# The prelink helpers come from the core XnuPrelink kit board.toml selects;
+# the retired kits/NativePrelink copy stays in this repository only as a
+# reference for the deprecated local prelink scripts.
+XNU_PRELINK=diting_paths.xnu_prelink()
+if not (XNU_PRELINK/'native_prelink.py').is_file():
+    raise SystemExit(f'XnuPrelink kit missing: {XNU_PRELINK} '
+                     '(check out the UniXNU components or set DITING_XNU_PRELINK)')
+sys.path.insert(0,str(XNU_PRELINK))
 import native_prelink as np
+
+
+def arm64_image(data):
+    """Return the ordinary little-endian ARM64 Mach-O from a thin or fat image.
+
+    The 22H374 kernelcache is a cafebabe universal file; XnuPrelink parses thin
+    images only, so the ARM64 slice extraction stays local to this recipe.
+    """
+    if len(data) >= 8 and struct.unpack_from('>I', data)[0] in (0xCAFEBABE, 0xCAFEBABF):
+        count = struct.unpack_from('>I', data, 4)[0]
+        for index in range(count):
+            cpu, subtype, offset, size, _align = struct.unpack_from('>5I', data, 8 + index * 20)
+            if cpu == 0x0100000C and (subtype & 0x00FFFFFF) == 0:
+                end = offset + size
+                if end > len(data):
+                    raise ValueError('ARM64 slice extends past the fat image')
+                return data[offset:end]
+        raise ValueError('Fat Mach-O has no ordinary ARM64 slice')
+    return data
+
+
 p=argparse.ArgumentParser(description=__doc__)
 p.add_argument('--tree',type=Path,required=True)
 p.add_argument('--kernel',type=Path,default=diting_paths.kernelcache())
@@ -42,7 +70,7 @@ for g in m['segments']:
 methods=[]
 while vt+16+len(methods)*8 in rel:methods.append(rel[vt+16+len(methods)*8])
 if not 150<len(methods)<256:raise SystemExit('Unexpected public storage vtable size')
-b=np.arm64_image(a.kernel.read_bytes());m=np.macho(b);ex=np.exports(b,m);known={n:v for v,ns in ex.items() for n in ns}
+b=arm64_image(a.kernel.read_bytes());m=np.macho(b);ex=np.exports(b,m);known={n:v for v,ns in ex.items() for n in ns}
 s=next(s for g in m['segments'] for s in g['sections'] if s['name']=='__info')
 info=np.unserialize_xml(b[s['fileoff']:s['fileoff']+s['size']].rstrip(b'\0'))
 e=next(e for e in info['_PrelinkInfoDictionary'] if e.get('CFBundleIdentifier')=='com.apple.iokit.IOStorageFamily')

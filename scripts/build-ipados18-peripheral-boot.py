@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Extend the unchanged Diting boot recipe with the selected restore's HID stack.
+"""DEPRECATED — Extend the unchanged Diting boot recipe with the selected restore's HID stack.
+
+Nothing in the build chain calls this script. It execs
+scripts/build-ipados18-prelinked-boot.py (deprecated) and monkey-patches that
+flow's kits/NativePrelink emit_prelink import. The release flow selects
+components through board.toml [kernel.prelink] and the core XnuPrelink kit
+instead, then scripts/finalize-diting-adt.py + scripts/build-bootimg.py
+assemble the v4 image.
 
 IOHIDFamily owns IOHIDResource. Its codeless EventDriver personalities connect
 standard Consumer reports. No Apple touch-controller driver is selected.

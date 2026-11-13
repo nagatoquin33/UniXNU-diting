@@ -1,4 +1,11 @@
-"""22H374's single APFS root-upgrade policy call, backed by native VFS checks.
+"""DEPRECATED — 22H374's single APFS root-upgrade policy call, backed by native VFS checks.
+
+The only consumer was scripts/build-ipados18-prelinked-boot.py (deprecated);
+nothing in the release chain imports this module. The rootful-upgrade policy
+now lives in the kernel patch series
+(patches/xnu-ipados18/0003-diting-rootful-upgrade.patch) behind the
+diting_rootful=1 board argument in board.toml [payload] kernel_args. Retained
+as the reference for the retired local prelink flow.
 
 This adapter leaves the real mount flags, filesystem authentication, snapshots,
 and all other APFS permission checks intact. It never edits the restore input.

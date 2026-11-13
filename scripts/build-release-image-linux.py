@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
-"""Build the Diting RELEASE Android-boot-v4 image on Linux, without macOS hdiutil.
+"""DEPRECATED — Build the Diting RELEASE Android-boot-v4 image on Linux, without macOS hdiutil.
+
+Nothing in the build chain calls this script. The release image path it wraps
+now lives in .github/workflows/package.yml: `unixnu release` prelinks through
+the core XnuPrelink kit (board.toml [kernel.prelink]), then
+scripts/finalize-diting-adt.py and scripts/build-bootimg.py assemble the v4
+container. Its --prelink-kernel option still imports the retained
+kits/NativePrelink because the library-only component policy
+(emit(library_only_components=...), plan(verify_images=False)) never moved
+upstream; keep it only as a reference for that retired path.
 
 Why this script exists
 ----------------------
