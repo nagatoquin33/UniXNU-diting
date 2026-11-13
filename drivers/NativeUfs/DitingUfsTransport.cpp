@@ -25,8 +25,8 @@
 #include <sys/param.h>
 #include <sys/types.h>
 #include "../DitingProbe.h"
-// Power/USB/WLAN share the Apps SMMU. UFS also builds without that optional
-// aggregate, so weak imports retain the single-owner storage-only profile.
+// Power/USB/WLAN share the Apps SMMU. The lease is a hard prerequisite:
+// without it UFS refuses SMMU programming rather than race a shared table.
 extern "C" bool diting_smmu_lease_lock(void) __attribute__((weak_import));
 extern "C" void diting_smmu_lease_unlock(void) __attribute__((weak_import));
 
@@ -124,7 +124,8 @@ static bool transportFailure(const char *why) {
   { uint32_t stall = 0;
     if (PE_parse_boot_argn("diting_ufs_stall", &stall, sizeof(stall)) && stall) {
       IOLog("DITING_UFS: stalled for capture; the line above is the transport state\n");
-      for (;;) IOSleep(1000);
+      for (unsigned s = 0; s < 180; ++s) IOSleep(1000);
+      IOLog("DITING_UFS: stall window elapsed; continuing boot\n");
     } }
   DitingProbeRecord(4, "ufs-transport", DitingProbeFail, why, gRootDiagnostic.result);
   snprintf(text, sizeof(text), "stage=%s op=%x ocs=%x scsi=%x protocol=%u", gRootDiagnostic.stage,
@@ -171,10 +172,10 @@ static bool hostBringUp() {
     bool held = false;
     ~Lease() { if (held) diting_smmu_lease_unlock(); }
   } lease;
-  if (diting_smmu_lease_lock && diting_smmu_lease_unlock) {
-    lease.held = diting_smmu_lease_lock();
-    if (!lease.held) return transportFailure("Apps SMMU lease unavailable");
-  }
+  if (!diting_smmu_lease_lock || !diting_smmu_lease_unlock)
+    return transportFailure("Apps SMMU lease symbols absent; refuse unserialized SMMU programming");
+  lease.held = diting_smmu_lease_lock();
+  if (!lease.held) return transportFailure("Apps SMMU lease unavailable");
   gRootDiagnostic.stage = "SMMU plan";
   gHost.smmu = mapPhys(0x15000000, 0x100000, gHost.smmuMap);
   if (!gHost.smmu) return transportFailure("SMMU map");
@@ -257,7 +258,7 @@ public:
     *v = !gHost.writable || (window.baseByte & 4095) || (window.size & 4095);
     return kIOReturnSuccess;
   }
-  IOReturn reportMediaState(bool *v, bool *changed) override { *v = online && gHost.ready; if (changed) *changed = false; return kIOReturnSuccess; }
+  IOReturn reportMediaState(bool *v, bool *changed) override { *v = online; if (changed) *changed = false; return kIOReturnSuccess; }
   IOReturn doSynchronizeCache() override { return hostSyncCache(); }
   IOReturn doSynchronize(UInt64, UInt64, IOOptionBits) override { return doSynchronizeCache(); }
   IOReturn getWriteCacheState(bool *v) override { *v = false; return kIOReturnSuccess; }

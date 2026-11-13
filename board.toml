@@ -22,6 +22,14 @@ chip_id = 0x8010
 board_id = 0x1c
 fetch = ["KernelCache", "DeviceTree", "StaticTrustCache", "Cryptex1,SystemOS", "Cryptex1,SystemTrustCache", "Cryptex1,AppOS", "Cryptex1,AppTrustCache", "OS"]
 
+# Pins for members whose fetched bytes we hold locally (hashes computed
+# 2026-11-13 from the matching J171 restore). KernelCache/OS/SystemOS/AppOS
+# stay unpinned: the local copies are decompressed/extracted artifacts, not
+# the raw fetch members (see migration-state image_hashes_used=false).
+[ipsw.sha256]
+DeviceTree = "acf9c6110f7c65936f72cc606a858f2f8008ac153d19bb4488e9ef767d1ffa01"
+StaticTrustCache = "61ce2dc95d72d33f19dcff3de858e4001742593d728239d205e3669794bcebc2"
+
 [components]
 # This is the community Diting A730/QCA6490/Darwin24 implementation, not the A740/WCN7850 source.
 # The kit lives in this repository at kits/DitingPlatform24 and declares no archive recipe: the

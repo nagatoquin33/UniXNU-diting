@@ -40,11 +40,6 @@
       "size": "0x40000"
     },
     {
-      "name": "xbl_ramdump_region@80640000",
-      "base": "0x80640000",
-      "size": "0x1c0000"
-    },
-    {
       "name": "aop_image_region@80800000",
       "base": "0x80800000",
       "size": "0x60000"
@@ -90,14 +85,9 @@
       "size": "0x4600000"
     },
     {
-      "name": "video_region@9FD00000",
-      "base": "0x9fd00000",
-      "size": "0x700000"
-    },
-    {
-      "name": "adsp_region@85700000",
+      "name": "region11@85700000",
       "base": "0x85700000",
-      "size": "0x2800000"
+      "size": "0x700000"
     },
     {
       "name": "slpi_region@88000000",
@@ -155,14 +145,39 @@
       "size": "0x800000"
     },
     {
+      "name": "region23@9fd00000",
+      "base": "0x9fd00000",
+      "size": "0x3100000"
+    },
+    {
+      "name": "region24@a6b80000",
+      "base": "0xa6b80000",
+      "size": "0x280000"
+    },
+    {
       "name": "xbl_sc_region@a6e00000",
       "base": "0xa6e00000",
       "size": "0x40000"
     },
     {
+      "name": "region26@a6f00000",
+      "base": "0xa6f00000",
+      "size": "0x100000"
+    },
+    {
+      "name": "region27@e0000000",
+      "base": "0xe0000000",
+      "size": "0x600000"
+    },
+    {
       "name": "cpusys_vm_region@e0600000",
       "base": "0xe0600000",
       "size": "0x400000"
+    },
+    {
+      "name": "region29@e0a00000",
+      "base": "0xe0a00000",
+      "size": "0x100000"
     },
     {
       "name": "trust_ui_vm_qrtr@e55f3000",
@@ -195,19 +210,14 @@
       "size": "0x500000"
     },
     {
-      "name": "ramoops_region",
-      "base": "0x85200000",
-      "size": "0x400000"
-    },
-    {
-      "name": "bootloader_log_region@A7605000",
-      "base": "0xa7605000",
-      "size": "0x8000"
-    },
-    {
-      "name": "splash_region",
+      "name": "splash_region@b8000000",
       "base": "0xb8000000",
       "size": "0x2b00000"
+    },
+    {
+      "name": "ramoops@a7000000",
+      "base": "0xa7000000",
+      "size": "0x400000"
     }
   ],
   "allocatable": [
