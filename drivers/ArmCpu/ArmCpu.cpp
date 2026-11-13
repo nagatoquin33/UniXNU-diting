@@ -329,6 +329,7 @@ bool ArmCpu::start(IOService *provider)
   perfmon_interrupt_handler_func pmi = nullptr;
   kern_return_t status = ml_processor_register(&info, &machProcessor, &ipi_handler, &pmi);
   if (status != KERN_SUCCESS) {
+    armcpu_smp_fail[logicalId & 7] = 4; // upstream's code for this failure
     IOLog("ArmCpu: CPU %u registration failed %d\n", logicalId, status);
     return false;
   }
@@ -366,7 +367,7 @@ bool ArmCpu::start(IOService *provider)
           : !cpu->attach(nub) ? "attach"
           : !cpu->start(nub) ? "start" : nullptr;
       if (stage != nullptr) {
-        armcpu_smp_fail[number & 7] = 5;
+        if (!armcpu_smp_fail[number & 7]) armcpu_smp_fail[number & 7] = 5;
         panic("ArmCpu: cannot register topology CPU %d (MPIDR %#x) at %s",
             number, id, stage);
       }
