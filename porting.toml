@@ -4,11 +4,12 @@ schema_version = 1
 name = "diting"
 soc = "SM8475"
 os_profile = "ipados-18.7.10-22H374"
-summary = "Redmi K50 Ultra (diting/SM8475), iPadOS 18.7.10 / Darwin 24 bring-up from the Diting baseline. The areas below are inherited Diting records; they are not evidence for this device until the matching hardware result is observed and recorded here."
+summary = "Redmi K50 Ultra (diting/SM8475), iPadOS 18.7.10 / Darwin 24 bring-up from the Diting baseline. The areas below are inherited from the Pong (Nothing Phone 2, SM8475) migration lineage; they are not evidence for this device until the matching hardware result is observed on diting and recorded here."
 
 [[area]]
 id = "configuration"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["board.toml", "feeds.toml", "unixnu.lock", "drivers/**", "configs/**", "dts/**", "migration/format2/**", "scripts/*format2*", "scripts/*native*sources*", "scripts/diting_native_inputs.py", "scripts/build-diting-profile-kernel.py", ".github/workflows/**", "README.md", "README_EN.md"]
 inputs = ["Pong live Android DT、NothingOSS SM8475源码与匹配22H374 restore"]
@@ -23,6 +24,7 @@ evidence = [{kind = "source", reported_kind = "host-build", reference = "README.
 [[area]]
 id = "firmware"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["drivers/DarwinBoot24/**", "scripts/build-darwinboot24*"]
 inputs = ["Pong live Android DT、NothingOSS SM8475源码与匹配22H374 restore"]
@@ -37,6 +39,7 @@ evidence = [{kind = "source", reference = "migration/format2/README.zh.md", resu
 [[area]]
 id = "cpu"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["drivers/ArmCpu/**", "drivers/ArmDTPlatform/**", "scripts/build-diting-armcpu*", "scripts/build-diting-platform*"]
 inputs = ["Pong live Android DT、NothingOSS SM8475源码与匹配22H374 restore"]
@@ -51,6 +54,7 @@ evidence = [{kind = "source", reported_kind = "host-build", reference = "migrati
 [[area]]
 id = "memory"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["configs/diting-memory-sm8475.json", "drivers/DitingAdreno/ArmSmmu4K/**"]
 inputs = ["Pong live Android DT、NothingOSS SM8475源码与匹配22H374 restore"]
@@ -65,6 +69,7 @@ evidence = [{kind = "source", reported_kind = "host-build", reference = "migrati
 [[area]]
 id = "storage"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["drivers/NativeUfs/**", "scripts/*ufs*", "scripts/*storage*", "scripts/*os-delta*"]
 inputs = ["Pong live Android DT、NothingOSS SM8475源码与匹配22H374 restore"]
@@ -79,6 +84,7 @@ evidence = [{kind = "source", reported_kind = "host-build", reference = "migrati
 [[area]]
 id = "display"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["configs/diting-display-sm8475.json", "drivers/DitingPower/DitingBacklight*", "scripts/*display*"]
 inputs = ["Pong live Android DT、NothingOSS SM8475源码与匹配22H374 restore"]
@@ -93,6 +99,7 @@ evidence = [{kind = "source", reported_kind = "host-build", reference = "migrati
 [[area]]
 id = "input"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["userland/touch.c", "userland/touch.h", "patches/xnu-ipados18/**", "drivers/GoodixTouch/**", "userland/ui_compat18.c"]
 inputs = ["Pong live Android DT、NothingOSS SM8475源码与匹配22H374 restore"]
@@ -107,6 +114,7 @@ evidence = [{kind = "source", reported_kind = "device-capture", reference = "mig
 [[area]]
 id = "gpu"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["drivers/DitingAdreno/**", "drivers/DitingMetal/**", "patches/mesa/**", "patches/metal2vulkan/**", "scripts/*metal*", "scripts/*adreno*", "scripts/*turnip*"]
 inputs = ["Pong live Android DT、NothingOSS SM8475源码与匹配22H374 restore"]
@@ -121,6 +129,7 @@ evidence = [{kind = "source", reported_kind = "device-capture", reference = "mig
 [[area]]
 id = "network"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["drivers/DitingWifi/**", "configs/diting-wifi-sm8475.json", "scripts/*wifi*", "scripts/*ath11k*"]
 inputs = ["Pong live Android DT、NothingOSS SM8475源码与匹配22H374 restore"]
@@ -135,6 +144,7 @@ evidence = [{kind = "source", reported_kind = "host-build", reference = "migrati
 [[area]]
 id = "audio"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["drivers/DitingPower/DitingAudio*", "drivers/DitingPower/DitingIOAudio2.h", "drivers/DitingPower/ShengAudioReach*", "userland/DitingAudioPlugIn.c", "userland/audio-route.c", "scripts/*audio*"]
 inputs = ["Pong live Android DT、NothingOSS SM8475源码与匹配22H374 restore"]
@@ -149,6 +159,7 @@ evidence = [{kind = "source", reported_kind = "host-build", reference = "migrati
 [[area]]
 id = "power"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["drivers/DitingPower/**", "configs/diting-power-sm8475.json", "userland/sleepserver/**"]
 inputs = ["Pong live Android DT、NothingOSS SM8475源码与匹配22H374 restore"]
@@ -163,6 +174,7 @@ evidence = [{kind = "source", reported_kind = "host-build", reference = "migrati
 [[area]]
 id = "packaging"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24", "XnuPrelink"]
 paths = ["scripts/package.sh", "scripts/finalize-diting-adt.py", "scripts/build-diting-hardware-dtb.py", "scripts/install-unixnu-inputs.py", "kits/DitingPlatform24/**", "os-profiles/**", "board.toml", ".github/workflows/package.yml", "scripts/build-ipados18*", "scripts/build-diting-profile-kernel.py", "scripts/make-diting-adt-ipados18.py", "scripts/build-xnu-ipados18.sh", "patches/xnu-ipados18/**"]
 inputs = ["UniXNU c96b299（release 与 templates/package.sh）、uefi-diting 固件树、匹配 22H374 restore、UNIXNU_UNIQUE_CHIP_ID 平台种子"]
@@ -177,6 +189,7 @@ evidence = [{kind = "source", reference = "migration/format2/README.zh.md", resu
 [[area]]
 id = "diagnostics"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["migration/ipados18/**", "scripts/diting_adt_contract.py", "userland/settings_compat18.c", "userland/init.c", "porting.toml", ".github/**"]
 inputs = ["Pong live Android DT、NothingOSS SM8475源码与匹配22H374 restore"]
@@ -191,6 +204,7 @@ evidence = [{kind = "source", reported_kind = "host-build", reference = ".github
 [[area]]
 id = "mobilegestalt-device-information"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["userland/usb_compat18.c", "userland/DitingGestaltKeys.h", "userland/usb_services18.py", "userland/init.c"]
 inputs = ["22H374 native lockdownd call sites", "actual Diting IOPMPowerSource and Speaker IOAudio2Device"]
@@ -205,6 +219,7 @@ evidence = [{kind = "source", reported_kind = "device-capture", reference = "mig
 [[area]]
 id = "native-category-volume"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["userland/settings_compat18.c", "userland/ui_compat18.c", "drivers/DitingPower/DitingIOAudio2.h"]
 inputs = ["22H374 AVSystemController and CoreAudio native control ABI", "services144 user audible lock sound and actual integer volume1"]
@@ -219,6 +234,7 @@ evidence = [{kind = "source", reported_kind = "host-build", reference = "migrati
 [[area]]
 id = "native-ringtone-display-wake"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["drivers/DitingPower/DitingIOAudio2.h", "drivers/DitingMetal/DitingMetalScanout.h", "drivers/DitingMetal/NativeBridgeMetalFrontend.mm", "userland/audio_codecs18.h", "userland/settings_compat18.c", "patches/xnu-ipados18/zzzzz-diting-wake-scanout-alpha.patch"]
 inputs = ["services146 native volume preferences and real PCM/DSP completions", "services146 wake scanout not-submitted and surface timeout logs"]
@@ -233,6 +249,7 @@ evidence = [{kind = "source", reported_kind = "host-build", reference = "migrati
 [[area]]
 id = "main-gpu-metal-ringer149"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["userland/settings_compat18.c", "drivers/DitingAdreno/submit/NativeAdrenoMemory.cpp", "drivers/DitingAdreno/submit/NativeAdrenoRing.cpp", "drivers/DitingMetal/NativeBridgeMetalFrontend.mm", "drivers/DitingMetal/bridge/NativeMetalObjects.rs", "patches/metal2vulkan/upstream149"]
 inputs = ["core6790e7c, AdrenoMetal a0f0287, Adreno740 a9a2cbb", "actual22H374 SBRingerControl method ABI and148 logs"]
@@ -247,6 +264,7 @@ evidence = [{kind = "source", reported_kind = "host-build", reference = "migrati
 [[area]]
 id = "adreno-ringer-freeze150"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["drivers/DitingAdreno/submit/NativeAdrenoVm.cpp", "drivers/DitingAdreno/submit/NativeAdrenoRing.cpp", "drivers/DitingAdreno/DitingAdrenoCp.cpp", "drivers/DitingMetal/bridge/NativeMetalObjects.rs", "userland/settings_compat18.c", "userland/audio_codecs18.h", "userland/init.c"]
 inputs = ["services149 REC CP opcode cause1/device-lost/backboardd crash", "native ringer accepted cached mute false, ringtone scalar0.6763", "Adreno740 main a9a2cbb/36c4e44 and Qualcomm KGSL ring allocation"]
@@ -261,6 +279,7 @@ evidence = [{kind = "source", reported_kind = "host-build", reference = "migrati
 [[area]]
 id = "control-center-native-ringtone151"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["userland/ringtones18.py", "userland/ui_compat18.c", "drivers/DitingMetal/PrimeShaders.h", "drivers/DitingMetal/DitingMetalPlugin.mm", "patches/metal2vulkan/upstream149/0025-diting-bounded-idle-memory.patch"]
 inputs = ["150 live USB log: compressed MTLReplayer shader page-in failure and backboardd SIGBUS", "150 live USB log: scalar DisplayBrightness consumed by CBSliderCommitTelemetry as dictionary; cache slide resolved from actual objc export", "Native ringer request accepted, actual DSP PCM and TFA state"]
@@ -275,6 +294,7 @@ evidence = [{kind = "source", reported_kind = "host-build", reference = "migrati
 [[area]]
 id = "upstream-metal-keyboard152"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["drivers/DitingAdreno/submit/NativeAdrenoMemory.cpp", "drivers/DitingAdreno/submit/NativeAdrenoVm.cpp", "drivers/DitingAdreno/submit/NativeAdrenoPublish.cpp", "drivers/DitingMetal/DitingMetalPlugin.mm", "drivers/DitingMetal/NativeBridgeMetalFrontend.mm", "userland/ui_compat18.c", "userland/init.c", "patches/mesa/0005-diting-22h374-const-oom-cache-budget.patch"]
 inputs = ["UniXNU6790e7c/Adreno740a9a2cbb/AdrenoMetal831a9dc/Sheng28b3028", "151 real backboardd SIGSEGV: null device after unchecked constant-stream reservation", "Native keyboard resources and user-reported phone keyplane offset/123 failure"]
@@ -289,6 +309,7 @@ evidence = [{kind = "source", reported_kind = "host-build", reference = "migrati
 [[area]]
 id = "gpu-guide-memory-bgra153"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["drivers/DitingAdreno/submit/NativeAdrenoMemory.cpp", "drivers/DitingAdreno/submit/NativeAdrenoPublish.cpp", "drivers/DitingAdreno/DitingAdrenoClient.cpp", "drivers/DitingMetal/DitingMetalPlugin.mm", "patches/mesa/0006-diting-upstream-gmem-bgra-swap.patch"]
 inputs = ["Official GPU adaptation guide", "152 moving color-region report", "152 actual GPU scanout and presentation timings"]
@@ -304,6 +325,7 @@ evidence = [{kind = "source", reported_kind = "host-build", reference = "migrati
 [[area]]
 id = "gpu-real-execution-hotpath155"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["drivers/DitingAdreno/submit/NativeAdrenoMemory.cpp", "drivers/DitingAdreno/submit/NativeAdrenoVm.cpp", "drivers/DitingAdreno/submit/NativeAdrenoPublish.cpp", "patches/mesa/0007-diting-current-main-atomic-batches.patch"]
 inputs = ["153 actual first-IB opcode fault", "154 real908/908 GPU completion with continued user-reported slow UI", "official GPU guide and actual compiled Turnip backend"]
@@ -318,6 +340,7 @@ evidence = [{kind = "source", reported_kind = "device", reference = "migration/i
 [[area]]
 id = "metal-interface-ui-stalls156"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["drivers/DitingMetal/NativeBridgeMetalFrontend.mm", "drivers/DitingMetal/bridge/NativeMetalObjects.rs", "drivers/DitingMetal/PrimeShaders.h", "userland/metal_services18.py"]
 inputs = ["155 slow UI with working GPU", "Native prime journal:184 paths, only1 eligible library", "Native cameracaptured jetsam at27MiB/5s respawn"]
@@ -341,6 +364,7 @@ evidence = [{kind = "source", reference = "migration/ipados18/services159-startu
 [[area]]
 id = "gpu-priority-timing160"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["drivers/DitingAdreno/submit/NativeAdrenoSubmit.cpp", "drivers/DitingAdreno/submit/NativeAdrenoRing.cpp", "drivers/DitingAdreno/submit/NativeAdrenoUserClient.cpp", "patches/mesa/0008-diting-abi1-process-priority.patch", "drivers/DitingMetal/NativeBridgeMetalFrontend.mm"]
 inputs = ["official GPU guide", "159 real GPU completion with24-30ms frontend/8-12ms wait and user low-FPS report"]
@@ -355,6 +379,7 @@ evidence = [{kind = "source", reported_kind = "host-build", reference = "migrati
 [[area]]
 id = "audio-wake-active-acquire162"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["drivers/DitingPower/DitingIOAudio2.h", "drivers/DitingPower/DitingAudio.cpp", "drivers/DitingAdreno/submit/NativeAdrenoUserClient.cpp", "drivers/DitingMetal/NativeBridgeMetalFrontend.mm", "patches/mesa/0010-diting-completed-import-acquire.patch"]
 inputs = ["User161 sleep/unlock still silent", "161 actual GPU complete with remaining10-23ms imported completion cache work", "Nothing native TFA9873 B0 state definitions and shutdown order", "Official GPU timing and ownership guide"]
@@ -369,6 +394,7 @@ evidence = [{kind = "source", reference = "migration/ipados18/services162-sleep-
 [[area]]
 id = "audio-prepare-command-stages163"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["drivers/DitingPower/DitingIOAudio2.h", "drivers/DitingPower/DitingAudio.cpp", "drivers/DitingMetal/NativeBridgeMetalFrontend.mm", "drivers/DitingMetal/bridge/NativeMetalObjects.rs", "patches/metal2vulkan/0011-diting-bounded-command-stage-summary.patch"]
 inputs = ["services162 user-confirmed unlock silence", "real PCM/WRITE_DONE/amp engagement", "poster scheduled waits406ms", "official GPU stage guide"]
@@ -383,6 +409,7 @@ evidence = [{kind = "source", reported_kind = "host-build", reference = "migrati
 [[area]]
 id = "lock-sound-admission164"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["drivers/DitingPower/DitingIOAudio2.h", "patches/mesa/0011-diting-retire-observed-admission-fences.patch"]
 inputs = ["163 runtime scheduled backlog434ms", "163 real restart/PCM/WRITE_DONE but audible unlock recovery not confirmed", "native short-sound StopIO ownership audit"]
@@ -398,6 +425,7 @@ evidence = [{kind = "source", reference = "migration/ipados18/services164-lock-s
 [[area]]
 id = "scheduling-metal-audio-clock165"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["drivers/DitingMetal/QueuePriority.h", "drivers/DitingMetal/SharedShaderCache.h", "drivers/DitingMetal/NativeBridgeMetalFrontend.mm", "drivers/DitingAdreno/submit/NativeAdrenoCpu.cpp", "userland/audio_clock18.h"]
 inputs = ["upstream fix/gpu-scheduling-and-metal d6bd3dd complete core merge", "164 poster scheduler2.3s vs CP8.7-14.5ms", "native audio PCM/DSP/TFA normal-looking but unlock silence confirmed"]
@@ -413,6 +441,7 @@ evidence = [{kind = "source", reference = "migration/ipados18/services165-schedu
 [[area]]
 id = "submit-retirement-publication166"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["patches/mesa/0013-diting-atomic-submit-retirement-publication.patch"]
 inputs = ["165-final real nested-IB FSR80000402/FAR0xe0d4100", "kernel-accepted submit precedes user last_fence publication", "BO retirement/cache reuse samples last_fence concurrently"]
@@ -427,6 +456,7 @@ evidence = [{kind = "source", reference = "migration/ipados18/services166-submit
 [[area]]
 id = "frame-ownership-pac167"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["drivers/DitingAdreno/submit/NativeAdrenoUserClient.cpp", "drivers/DitingMetal/NativeBridgeMetalFrontend.mm", "patches/mesa/0015-diting-batched-host-ownership.patch", "patches/xnu-ipados18/zzzzzzzz-diting-native-pac-keys.patch", "drivers/ArmCpu/ArmCpu.cpp"]
 inputs = ["official GPU,diagnostics and arm64e documents", "core135b0da includes latest main04573c5", "166 native60/180/300s frame links", "backboardd35.890ms command with actual4.617ms CP execution"]
@@ -442,6 +472,7 @@ evidence = [{kind = "source", reported_kind = "host-build", reference = "migrati
 [[area]]
 id = "local-runtime-integration"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["scripts/build-ipados18*", "scripts/build-diting-smmu4k.py", "scripts/make-diting-adt-ipados18.py", "scripts/build-xnu-ipados18.sh", "patches/xnu-ipados18/**", "userland/build-ipados18.py"]
 inputs = ["Pong live Android DT、NothingOSS SM8475源码与匹配22H374 restore"]
@@ -457,6 +488,7 @@ evidence = [{kind = "source", reported_kind = "host-build", reference = "migrati
 [[area]]
 id = "cumulative-runtime-pr167"
 status = "implemented"
+provenance = "pong"
 components = ["DitingPlatform24"]
 paths = ["drivers/**", "userland/**", "patches/**", "kits/DitingPlatform24/build-with-runtime.py", "scripts/prepare-diting-mesa.py"]
 inputs = ["Remote main aaa2d739 packaging and AppCryptex changes", "All accumulated local board/runtime repairs through167", "Pinned public Mesa and metal2vulkan sources"]
@@ -467,3 +499,18 @@ completion = ["Reviewable source-only pull request with cumulative WiFi,brightne
 limits = ["No private binaries,firmware,restore images,Data or credentials", "Full hosted build and packaging pipeline not run", "Poster frame backlog and audible wake recovery still unresolved", "Running22H374 remainsarm64"]
 next_action = ["Review and run the preserved hosted packaging workflow with required local inputs"]
 evidence = [{kind = "source", reported_kind = "host-build", reference = "drivers/DitingAdreno/AGENTS.md", result = "Twelve Chengdong-Yu driver implementations vendored under drivers/ with their original sources and licenses, then renamed to Diting."}, {kind = "source", reported_kind = "host-build", reference = "migration/ipados18/runtime-fixes-and-build-overlay.md", result = "Merged native helper/UI/audio/sleep/Sileo/phone/route binaries, frontend,ArmCpu and changed GPU units compiled. Prepared Mesa source reproduces all25 changed source files; current device results remain separately recorded."}]
+
+[[area]]
+id = "diting-cs35l41-audio"
+status = "planned"
+provenance = "diting"
+components = ["DitingPlatform24"]
+paths = ["drivers/DitingPower/DitingAudio.cpp", "drivers/DitingPower/DitingAudioService.cpp", "drivers/DitingPower/ShengAudioReach.c", "drivers/DitingPower/ShengAudioReach.h", "drivers/DitingPower/DitingIOAudio2.h", "scripts/build-diting-audio-codecs.py", "scripts/build-diting-native-audio-runtime.py", "scripts/prepare-diting-audio.py", "dts/diting.dts"]
+inputs = ["Diting live DT audio hardware: two cs35l41 amplifier/codec nodes enabled and WSA883x disabled; this is not the TFA9873 hardware recorded in the inherited Pong lineage"]
+configuration = ["cs35l41 codec/amplifier binding with its SM8475 MI2S path; kernel driver and userland audio not yet enabled for this board"]
+procedure = ["Follow the audio stage in the porting guide using the cs35l41 inventory before any audio code is compiled into a test image"]
+findings = ["No audio test has ever run on diting hardware: the services140-167 audio/ringtone records inherited in this file are Pong (TFA9873) device history. The current C1/C4/E2 image series ships without audio compiled; TWRP reported no soundcard, which is inconclusive but consistent with unprobed hardware."]
+completion = ["A diting device-capture showing cs35l41 codec detection and an actual audio path on this hardware"]
+limits = ["Inherited Pong audio results do not count as diting verification; no analog gain, protection or calibration changes without factory data"]
+next_action = ["Inventory cs35l41 clocks, MI2S wiring and reset/control GPIOs from the live DT, then compile the audio build into a RAM-only test image"]
+evidence = []

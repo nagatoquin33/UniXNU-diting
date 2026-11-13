@@ -991,3 +991,42 @@ work is the boot itself, not the inputs.
 
 - 证据：E2 内嵌 kernel `7434c82f…` 源自 native aggregate `0477ce0a…`（E1 复用）；`strings` 中只有 `ldoc3`/`ldoc12` 旧路径，无 `ldoc2`/GPIO71/TCS4/`IC_INFO` 字符串 → kernel 构建早于 `0001` patch 的 C4 工作区编辑。
 - 口径：E2a 上机后触摸若失败，记为 **pre-C4 行为**，不归因 C4 修复无效、不归因 ufs 修复；release kernel 带 C4 重建列为独立待办（需先决定 `0001` patch 的提交策略）。
+
+## E2a/E2dbg — slot b 真机 panic（确定性，已符号化）：坏函数指针跳进 __DATA_CONST dispatchArray
+
+- 输入：E2a（metal=1，`6b0f53c4…`）与 e2dbg-usb1（`c37e0a04…`，同 kernel `7434c82f…` + `diting_usb=1`）。设备 `9e0c2b55`，slot 切 b 后 `fastboot boot` 恢复可用（A 侧引导链状态曾致全部镜像 `Not Found`）。
+- 观察：两次启动同屏同寄存器确定性 panic——`Kernel data abort. at pc 0xfffffff007907330, lr 0xfffffff0079f6734, far 0x928, esr 0x96080005`，pid 0 / tid 101；`Compressor Info: 0%`。
+- 符号化（slide=-0xDF3A0C，由 caller `0x7ad6660`↔panic 调用点 `0x88ca06c` 数学钉死）：pc→`__DATA_CONST.__const`（`IOUserServer::externalMethod` dispatchArray，执行表数据）；lr→`_kalloc_type_get_heap+0x30`；backtrace：`thread_dispatch→…→c_current_seg_filled→vm_fault_*→zcache_alloc_one→kalloc_type_get_heap→mach_vm_map_wrapped`。即压缩器/页故障路径上一个 **blr 跳进方法分发表**（表项指针被当函数指针调用）。`check-storage-bindings.py` PASS（9 绑定在段内）→ 排除 `ml_static_slide` 先例类。
+- 嫌疑（未定性）：未提交的 `0000-portable-kalloc-type-builtins.patch`（直接碰 kalloc_type）；`pmap_pong_pa_index` 物理页索引；压缩器 c_seg/codec ops 读错对象。e2dbg 未出 CDC 口——panic 早于 DitingUsb 枚举或 USB 路径未通。
+- 文档勘误（同批）：`porting.toml` 33 个 area 全部是 **Pong（Nothing Phone 2）迁移线**记录（format2 README 即 pong 版换名；services70-167 全含 /pong 路径+TFA9873，零 diting 硬件标记；`UniXNU-diting` checkout 含原始记录）。已逐 area 加 `provenance="pong"`、summary 点名 Pong 来源、新增 `diting-cs35l41-audio`（status=planned，注明 live DT 双 cs35l41 enabled / WSA883x disabled、C1-C4-E2 均未编音频）；`porting-record.py check` 通过。上游 sync-devices 重渲染后生效。
+- 下一步：定位 `_kalloc_type_get_heap`+0x2c 的 `blr` 目标来源（kalloc_type 表/描述符索引是否越界）；确认 panic 内核是否带了未提交 kalloc patch；再出新镜像。
+
+# 2026-11-13 — slot b 恢复与 E2a panic 符号化、文档 provenance 修正
+
+# 2026-11-13 — E2a panic 定性更新：嵌套 panic + 确定性内存损坏（非压缩器记账错）
+
+- panic 顺序确认：屏幕 `Original panic string:` 标签 = 嵌套 panic。第一个 panic = `Kernel data abort`（caller 正确值 `0x7bc32a8` → `_sleh_synchronous+0xfe0` 的 panic 调用点；此前照片把 caller 读成 7ad56xx/7af56xx 是 OCR 误读）。第二个 panic = panic 处理中嵌套触发的 `assertf(c_segment_pages_compressed_incore_late_swapout >= 0)`（`_c_decompress_page+0xc10`；`x9=5438` 为源码行号）。
+- panic#1 机制：`zcache_alloc_one(zid,flags,ops)` 的 `ops`（x2→x21）取 `ops->zc_op_alloc/zc_op_mark_valid`（`blr x8`）跳转——但保存的 `x21=0x7c21720` → `__TEXT_EXEC`（`_fasttrap_meta_create_probe+0x200`），即 ops 指向代码区。跳转经 `br/braa`（PAC 不改 lr）落 `__DATA_CONST` dispatchArray，执行表项字节解码出 `[NULL+0x928]` 访存 → far=0x928。
+- panic#2 机制：`c_has_donated_pages` 在被释放的 c_seg 上为 1——此配置（无 swap、`memorystatus_swap_all_apps=false`、freezer 不跑）下该 flag 永远不可能合法置位 → c_seg 结构被野写。
+- 三个独立损坏指纹同源：①坏函数指针跳转 ②c_seg flag 伪置位 ③栈帧链走进 `_diting_wifi_firmware` 数据区 → 大范围内存损坏，不是记账错。
+- 更正（2026-11-13）：`0000-portable-kalloc-type-builtins.patch` **实际已被应用**——`PATCHES=(patches/xnu/*.patch patches/xnu-ipados18/*.patch)` 是 glob 不是 series 驱动；该 patch 把 `__builtin_xnu_type_signature→""`、`type_summary→DATA`、`types_compatible→1`，效果是全部类型标 `KT_DATA_ONLY`（签名本就对 data 类型为空）、堆选择仍按真实 sizeof —— 安全机制降级（类型混淆/释放检查失效）但**不是主动野写源**，E1a 能跑到 mountroot 也印证。原记录"不在 series 未应用"作废（series 文件此前缺失 0000-*/0002/0003，已重建为 glob 应用序）。`pmap_pong_pa_index` 只在 pong patch，diting patch 用的是 `pmap_diting_pa_index`（稠密多段索引，实现自洽）；page_shift 静态初始化无时序问题；ml_static_slide 类经 check-storage-bindings 排除。
+- 物理内存拓扑：`diting-allocatable-ram` = 14 bank ~11.5GiB（含 4GiB 线以上 `0x840000000..0xa80000000` 9GiB），由 loader `ClaimDitingRam` 认领后写 `darwinboot-memory-ranges` wire（镜像里是零模板，运行时填充）。kernel `diting_ram_init` 对重叠 bank fail-safe 退化为单段线性 → bank 数据本身不是直接根因。
+- 最强嫌疑：`--ufs-probe`（E1a↔E2a 唯一差异）。E1a（无 ufshc 节点 → NativeUfs 不起）同 kernel `7434c82f` 跑到 root-mount 超时 panic；E2a（NativeUfs 起：MMIO@0x01d84000 + SMMU takeover@0x15000000 把 stream 0xe0 配成 VA64 bypass 裸 PA DMA + DMA buffer）在更早阶段确定性崩。两条路径：(a) NativeUfs SMMU/DMA 描述符 PA 错→控制器乱写；(b) SMMU takeover 重编程了其他设备在用的 context bank/stream→旁设备 DMA 乱写。确定性（两次同屏同寄存器）偏向逻辑 bug 而非随机 DMA，但 takeover 每次 boot 状态一致→可确定性。
+- 下一步（只取证）：对比 E1a/E2a 镜像 ADT `ufshc` 节点 + memory-map/reserved 差异（静态）；核对 0x15000000/0x01d84000 是否为 diting 真实 SMMU/UFHC MMIO（错地址=写 RAM）；若资源无误做"ufshc 节点在但 NativeUfs 不启动"对照镜像隔离 node-presence vs driver-start。
+
+# 2026-11-13 — UFS 隔离实验一：`native-ufs=0` → mountroot（损坏 panic 消失）；上游/文档核查
+
+- 设备 boot `e2dbg-ufs0.img`（e2dbg-usb1 `c37e0a04` + `native-ufs=0`，sha256 `dd7a0cdb`）：驱动在 start() 顶部拒绝 → 一路跑到 `Failed to mount root device @IOKitBSDInit.cpp:996`，与 E1a 同点；压缩器损坏 panic 未发生 → **`ufshc` ADT 节点存在本身无罪，`diting_ufs_transport_start` 运行时路径是损坏触发点**。二级变体 `e2dbg-ufs2.img`（`native-ufs-probe=2`，sha256 `f442b9aa`，只读寄存器不碰 DMA/SMMU/队列）已生成未 boot。
+- e2dbg boot args（补丁工具读全）：`diting_ufs_readwrite=1` `diting_ufs_stall=1` `diting_disable_swap=1` `launchd_rd=md0` `cpus=8` `diting_usb=1` —— UFS 写路径开启。
+- 上游参照 `UniXNU-sheng/drivers/ShengUfs`（SM8550，官方实现 `NativeUfs`）：diting 驱动是其移植后代。已核实 diting 常量对板正确：stream `0xe0`（live DT `iommus=<0x5b 0xe0 0x00>`）、apps_smmu `0x15000000`（`qcom,qsmmu-v500`，banks 78 / smr 120 = DT override 一致）、HC `0x01d84000`。`dma-coherent`。
+- 上游移植契约（unixnu.com/porting/ufs）明确要求 "establish DMA reachability"；上游实测教训："kernel-allocated buffer at 0xf080f000 reset the system, nothing below 0xc8000000 is allocatable"——任意内核 buffer 对 UFS 控制器不一定可达；diting 直接分配新 IOBufferMemoryDescriptor，未收养固件 UTRL（上游 adopt 路径）。
+- 已排除：`vm_page_find_contiguous` 用 `VM_PAGE_GET_PHYS_PAGE`（稠密索引→真实 PA），跨 bank 正确断 run；`getPhysicalSegment` 按真实 pnum 相邻性合段；pnum 语义保持真实 PA；四个共享 apps_smmu 的驱动（ufs 0xe0 / usb 0 / audio 0x1801 / wifi 0x1c01）均走 `diting_smmu_lease_lock` 串行 plan+configure，S2CR 全为 TRANSLATE 型互检有效；Adreno 用独立的 kgsl-smmu@0x3da0000。
+- 次要发现（非本 panic 根因）：`configs/diting-memory-sm8475.json` 的 allocatable 与 live DT reserved 布局不一致（config 系 REC fdt 派生），与 live DT 保留区有 5 处表面重叠（adsp 42MB / qheebsp 6MB / hyp 1MB / global_sync 1MB / xbl_ramdump）——但认领路径是 `allocatable ∩ UEFI-free ∩ ≥4GiB`，UEFI 若标保留则不会认领。配置应修正对齐 live DT 以防依赖 UEFI 正确性。
+- 损坏指纹重申（确定性、两次同屏同寄存器）：①`zcache_ops[zid]`→ops=__TEXT_EXEC 码址→`blr` 跳 __DATA_CONST dispatchArray 执行表数据 far=0x928；②`c_has_donated_pages` 伪置位（无 swap 不可能合法置位）→嵌套 assertf `lateswapout>=0`；③fp 链走进 `_diting_wifi_firmware` 数据区。主嫌疑：UFS 传输开始后控制器 DMA 经错误可达性/描述符拾取野写。
+- 待办：boot `e2dbg-ufs2.img` 区分"寄存器阶段 vs 传输阶段"；若确认传输阶段，按上游契约改为收养固件 UTRL PA（UTRLBA 0x50/0x54 读出值）或把 DMA 约束进已证明可达的低区，再验证。
+
+# 2026-11-13b — 仓库整理 + allocatable 保留区勘误
+
+- `configs/diting-memory-sm8475.json`：allocatable 与本仓 `dts/diting.dts` reserved-memory 曾有 6 段自相矛盾的重叠（adsp region23 `0xa0400000-0xa2e00000` 42MB、region24 2.5MB、region26 1MB、ramoops `0xa7000000-0xa7400000` 4MB、region27 `0xe0000000-0xe0600000` 6MB、region29 1MB）。已按**本仓 dts reserved ∪ REC reserved 双集**切割，14→15 bank、边界对齐保留区、剩余重叠 0。注：这些 bank 全 <4GiB，而 `ClaimDitingRam` 每次认领 `MAX(base,desc,0x100000000)` 钳到 ≥4GiB——重叠是死配置不生效，修正属契约一致性/防回归；≥4GiB 三 bank 不受此切割影响。
+- `patches/xnu-ipados18/series` 重建为真实应用序（5×0000 + 0001 + 0002 + 0003 + 7×zz*）。`0000-*` 与 `patches/xnu/` 同名文件逐字节相同，是 macOS 布局必需品（`build-ipados18-diting-macos.py` 将 xnu-ipados18 链接为 xnu），已纳入 git 跟踪。
+- UniXNU-diting 检出（HEAD `6400a07`，落后 diting-ci 6 天）含 26 文件旧版未提交改动 + 独有 `diting_ipados18_validation_defconfig`、`platform-firmware/basecore-advanlogger.patch`——旧迭代残留，非当前线。
