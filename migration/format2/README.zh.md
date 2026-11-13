@@ -7,13 +7,13 @@
 | 层 | 文件与用途 |
 | --- | --- |
 | ARM64 | 主仓库 `profiles/arch/arm64`；4 KiB 公共配置 |
-| SM8475 | 相邻 `UniXNU-sm8475-common`；CPU/GIC/时钟与控制器 DTSI |
-| OS | 本仓库 `migration/format2/profiles/os/ipados-18.7.10-22H374`，安装到主仓库同名 profile；Darwin 24、Apple 源码版本及系统身份 |
+| SM8475 | 本仓库 `migration/format2/soc-seed`（feeds 按 `path` 钉版；本地开发副本 `soc-diting` 未接入）；CPU/GIC/时钟与控制器 DTSI |
+| OS | 本仓库 `os-profiles/ipados-18.7.10-22H374`，安装到主仓库同名 profile；Darwin 24、Apple 源码版本及系统身份 |
 | Diting | `board.toml`、`dts/diting.dts`、configs、固件选择、驱动和用户态适配 |
 
 `feeds.toml` 和 `unixnu.lock` 固定 SM8475 与社区组件的公开源提交。SM8475 源位于本仓库独立的 `migration/format2/soc-seed` 子目录，通过格式2 feed 的 `path` 选择；没有填入不存在的官方 SM8475 仓库。迁移脚本可根据种子及提交元数据重建相邻的本地 SoC 开发仓库，再用忽略的 `local.toml` 记录覆盖。公开源固定版本与本地种子提交分别记录，二者源码相同但 Git 根目录不同。
 
-`DitingPlatform24` 是社区 Diting 实现的组件标识，保留 A730、QCA6490/ath11k、TFA9873 和 Darwin24 绑定。它没有冒用 Adreno740、Ath12kWifi 或 ShengUfs 的官方源身份。组件目录扩展保存在本仓库，迁移脚本安装到选定主仓库。现阶段将相关平台实现作为一个组件聚合，源码目录不移动，避免破坏相对 include 与现有补丁。
+`DitingPlatform24` 是社区 Diting 实现的组件标识，保留 A730、QCA6490/ath11k、CS35L41 和 Darwin24 绑定。它没有冒用 Adreno740、Ath12kWifi 或 ShengUfs 的官方源身份。组件目录扩展保存在本仓库，迁移脚本安装到选定主仓库。现阶段将相关平台实现作为一个组件聚合，源码目录不移动，避免破坏相对 include 与现有补丁。
 
 ## 本机准备与构建
 

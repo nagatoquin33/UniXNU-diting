@@ -10,5 +10,10 @@ Cryptex1,AppTrustCache
 OS
 # Diting firmware comes from this phone's REC modem/vendor partitions:
 # adsp.mbn, QCA6490 amss/amss20/m3/regdb and selected board data,
-# TFA9873 tfa98xx.cnt, Adreno730/GMU/ZAP and Goodix firmware.
+# CS35L41 amplifier firmware, Adreno730/GMU/ZAP and Goodix (goodix_firmware_l12) firmware.
 # No firmware binaries are stored in this repository.
+#
+# Exception (build tools, not device firmware): platform-firmware/vendor/
+# basetools-v2026080000.0.1.tar.gz and OneCrypto-Accelerated.zip are tracked
+# upstream Mu release archives vendored because the release CDN repeatedly
+# returned HTTP 504; their SHA-256 pins live in platform-firmware/seed-ext-deps.py.

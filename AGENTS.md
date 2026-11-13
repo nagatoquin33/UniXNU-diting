@@ -85,6 +85,8 @@
    provides PCIe/PHY/GPIO; the refgen clock is at `freq[10]` with `clock_names[8]` = `pcie_phy_refgen_clk`.
 3. Wi-Fi firmware is checked in under `platform-firmware/wifi/` (amss.bin 5,470,128, amss20.bin 5,296,128,
    m3.bin 266,684, regdb.bin 24,278), pulled from `/vendor/firmware_mnt/image/qca6490` on the device.
+   更正（2026-11-13d）：这些 `.bin` 从未提交入仓——`.gitignore:9 *.bin` 一直将其挡在仓外，
+   文件只存在于本地磁盘；后续已迁至私有仓 `nagatoquin33/diting-firmware` release fw-20261111（见下）。"checked in" 应读作 "checked into the local workspace"。
 
 ## CI notes
 - `.github/workflows/package.yml` has two jobs: `firmware` (ubuntu, builds the Diting FD and uploads

@@ -2,9 +2,9 @@
 
 [简体中文](README.md) | **English**
 
-Format 2 device support for Nothing Phone (2), codename **Diting**, Qualcomm **SM8475**. Main targets **iPadOS 18.7.10 (22H374)** from iPad7,11 / J171AP, Darwin 24.6.0 / XNU 11417.140.69. The board remains Diting. The earlier iOS16 implementation remains in Git history.
+Format 2 device support for the Redmi K50 Ultra (`diting`), Qualcomm **SM8475**. Main targets **iPadOS 18.7.10 (22H374)** from iPad7,11 / J171AP, Darwin 24.6.0 / XNU 11417.140.69. Most driver sources descend from the Pong (Nothing Phone 2, same SM8475) port and are marked `provenance = "pong"` in [porting.toml](porting.toml) until re-verified on this device.
 
-- [UniXNU tools](https://github.com/UniXNU/UniXNU), [Diting UEFI](https://github.com/Chengdong-Yu/uefi-pong)
+- [UniXNU tools](https://github.com/UniXNU/UniXNU); UEFI package in-tree at `platform-firmware/ditingPkg` ([uefi-pong](https://github.com/Chengdong-Yu/uefi-pong) is the external SM8475 reference)
 - Official [migration](https://unixnu.com/en/porting/migration) and [device repository](https://unixnu.com/en/porting/device-repository) guides
 - [Format 2 integration](migration/format2/README.zh.md), [OS migration](migration/ipados18/README.zh.md), [porting record](porting.toml)
 
@@ -12,42 +12,42 @@ Format 2 device support for Nothing Phone (2), codename **Diting**, Qualcomm **S
 
 | Area | Configuration and observations |
 | --- | --- |
-| CPU / memory | X2 + 3×A710 + 4×A510, PSCI/GICv3, 19.2 MHz timer, native 4 KiB pages; 12 GiB physical RAM, managed memory constrained by reservations |
-| Display / input | 1080×2412, stride 4320, requested 120 Hz; desktop, touch, wallpaper and brightness control have device confirmation; actual refresh remains under investigation |
-| GPU / Metal | Adreno 730 with Diting firmware, Turnip and Metal desktop rendering; upstream scheduling, cache and Metal updates integrated, with remaining slow-frame and resume issues |
-| Storage | Native UFS/APFS boot, separate OS/SystemOS and writable Data at `/private/var`; the device Data volume is 128 GB, while the hosted seed remains 8 GiB |
-| Wi-Fi | QCA6490/ath11k with Diting firmware; PCIe/SMMU/DMA repairs and native system integration, with scanning and association confirmed |
-| Audio | ADSP, AudioReach, two TFA9873 amplifiers and native IOAudio2; ordinary playback and volume confirmed, but audio recovery after lock remains unresolved |
-| Buttons / power | Real PMIC events reach HID/SpringBoard and native power/volume actions; full suspend/resume remains incomplete |
+| CPU / memory | X2 + 3×A710 + 4×A510 (4+3+1), PSCI/GICv3, 19.2 MHz timer, native 4 KiB pages; 12 GiB physical RAM, managed memory constrained by reservations |
+| Display / input | 1220×2712, Goodix Berlin-D GT9916 touch (SPI 0x990000); the C1 minimal image reached the iOS home screen on device (2026-11-12, user-observed); touch is not yet responsive — attribution pending |
+| GPU / Metal | Adreno 730 community implementation (`DitingAdreno`/`DitingMetal`, Turnip/metal2vulkan patch sets); opt-in via `diting_adreno_start`/`diting_metal`; not device-verified on diting |
+| Storage | NativeUfs, ShengUfs-derived SM8475 port (ufshc 0x01d84000, apps_smmu 0x15000000 stream 0xe0); SHNGROOT v1 OS/SystemOS/Data windows published and launchd reached on Pong lineage; the diting C1 image also ran to the home screen with UFS enabled on `cpus=1`. A deterministic memory-corruption panic on the full-open image is under investigation — see AGENTS.md |
+| Wi-Fi | QCA6490/ath11k over PCIe0+MHI; compiles to `libDitingAth11k.a`; firmware kept local, never committed; not device-verified |
+| Audio | ADSP PAS1; live DT has dual CS35L41 amps on `i2c@880000` (wsa883x disabled, TFA9873 absent); CS35L41 bring-up is planned (porting area `diting-cs35l41-audio`) |
+| Buttons / power | PMIC events via DitingPower; power/backlight ran during the C1 desktop boot; buttons and suspend/resume pending verification |
 
 Host builds and service publication are recorded separately from device functionality. Historical source and device observations remain in the migration records.
 
-Current source includes the accumulated Wi-Fi, brightness, HID, audio, battery, native USB/Finder, keyboard, rootful userland and GPU/Metal fixes. Wi-Fi association, brightness and native audio volume have device confirmation; audio recovery after lock and remaining GPU frame latency are still under investigation. The installed Data volume has been expanded to 128 GB; the hosted userdata recipe retains its original 8 GiB seed. arm64e/PAC preparation does not switch the running 22H374 arm64 system. See [runtime integration and preserved packaging scripts](migration/ipados18/runtime-fixes-and-build-overlay.md).
+Device-verified on diting so far: the UEFI menu, DarwinBoot24 handoff, launchd, and the C1 home screen. Everything else is host-build evidence or Pong lineage records — `porting.toml` carries per-area `provenance` and `evidence.reported_kind`. See [runtime integration and preserved packaging scripts](migration/ipados18/runtime-fixes-and-build-overlay.md).
 
 ## Driver repositories
 
-Every board driver under `drivers/` is a submodule of its own Chengdong-Yu repository, the same layout [UniXNU-sheng](https://github.com/UniXNU/UniXNU-sheng) uses. Path names are unchanged so the build scripts and the drivers' relative `#include`s keep working.
+Every board driver under `drivers/` is a vendored copy derived from the Chengdong-Yu `pong-*` community repositories (formerly referenced as submodules; the trees are now plain directories in this repository). Path names are unchanged so the build scripts and the drivers' relative `#include`s keep working.
 
 | Path | Repository | Hardware |
 | --- | --- | --- |
-| `drivers/ArmCpu` | [diting-arm-cpu](https://github.com/Chengdong-Yu/pong-arm-cpu) | SM8475 GICv3 + ARM generic timer, PSCI secondaries; Diting variant of upstream [ArmCpu](https://github.com/UniXNU/ArmCpu) |
-| `drivers/ArmDTPlatform` | [diting-arm-dt-platform](https://github.com/Chengdong-Yu/pong-arm-dt-platform) | Apple-format DT platform expert (`/chosen`/`/cpus`/`/arm-io`); Diting variant of upstream [ArmDTPlatform](https://github.com/UniXNU/ArmDTPlatform) |
-| `drivers/NativeRamBlock` | [diting-ram-block](https://github.com/Chengdong-Yu/pong-ram-block) | RAM-backed Data volume (sparse seed + persistent overlay); Diting variant of upstream [RamBlock](https://github.com/UniXNU/RamBlock) |
-| `drivers/DarwinBoot24` | [diting-darwin-boot24](https://github.com/Chengdong-Yu/pong-darwin-boot24) | Darwin 24 UEFI XNU loader + PONGFAT1; Darwin 24 variant of upstream [DarwinBoot](https://github.com/UniXNU/DarwinBoot) |
-| `drivers/AdrenoMetal` | [diting-adreno-metal](https://github.com/Chengdong-Yu/pong-adreno-metal) | Adreno Metal frontend pinned at `c6d29ca`; upstream [AdrenoMetal](https://github.com/UniXNU/AdrenoMetal) |
-| `drivers/NativeUfs` | [diting-ufs](https://github.com/Chengdong-Yu/pong-ufs) | SM8475 UFS host (`0x01d84000`), SID `0xe0`, SPI 265; SHNGROOT v1 three-window layout |
-| `drivers/DitingAdreno` | [diting-adreno](https://github.com/Chengdong-Yu/pong-adreno) | Adreno 730 GMU/CP/HFI/ZAP/SMMU/scanout (Cape GPUCC) |
-| `drivers/DitingMetal` | [diting-metal](https://github.com/Chengdong-Yu/pong-metal) | A730 Metal frontend for 22H374 with GOP scanout |
-| `drivers/DitingPower` | [diting-power](https://github.com/Chengdong-Yu/pong-power) | ADSP PAS1, dual TFA9873, WCD938x, NT37705 DCS backlight, battery |
-| `drivers/DitingUsb` | [diting-usb](https://github.com/Chengdong-Yu/pong-usb) | SM8475 DWC3/eUSB2 + NXP repeater, 32 KiB DMA / SID0 |
-| `drivers/DitingWifi` | [diting-wifi](https://github.com/Chengdong-Yu/pong-wifi) | QCA6490 over PCIe0 + MHI + ath11k, SID `0x1c01` |
-| `drivers/DitingBootCapture` | [diting-boot-capture](https://github.com/Chengdong-Yu/pong-boot-capture) | Bounded diagnostic restart via PMK8350 SID0 SDAM7100 |
+| `drivers/ArmCpu` | [pong-arm-cpu](https://github.com/Chengdong-Yu/pong-arm-cpu) | SM8475 GICv3 + ARM generic timer, PSCI secondaries; Diting variant of upstream [ArmCpu](https://github.com/UniXNU/ArmCpu) |
+| `drivers/ArmDTPlatform` | [pong-arm-dt-platform](https://github.com/Chengdong-Yu/pong-arm-dt-platform) | Apple-format DT platform expert (`/chosen`/`/cpus`/`/arm-io`); Diting variant of upstream [ArmDTPlatform](https://github.com/UniXNU/ArmDTPlatform) |
+| `drivers/NativeRamBlock` | [pong-ram-block](https://github.com/Chengdong-Yu/pong-ram-block) | RAM-backed Data volume (sparse seed + persistent overlay); Diting variant of upstream [RamBlock](https://github.com/UniXNU/RamBlock) |
+| `drivers/DarwinBoot24` | [pong-darwin-boot24](https://github.com/Chengdong-Yu/pong-darwin-boot24) | Darwin 24 UEFI XNU loader + PONGFAT1; Darwin 24 variant of upstream [DarwinBoot](https://github.com/UniXNU/DarwinBoot) |
+| `drivers/AdrenoMetal` | [pong-adreno-metal](https://github.com/Chengdong-Yu/pong-adreno-metal) | Adreno Metal frontend pinned at `c6d29ca`; upstream [AdrenoMetal](https://github.com/UniXNU/AdrenoMetal) |
+| `drivers/NativeUfs` | [pong-ufs](https://github.com/Chengdong-Yu/pong-ufs) | SM8475 UFS host (`0x01d84000`), SID `0xe0`, SPI 265; SHNGROOT v1 three-window layout |
+| `drivers/DitingAdreno` | [pong-adreno](https://github.com/Chengdong-Yu/pong-adreno) | Adreno 730 GMU/CP/HFI/ZAP/SMMU/scanout (Cape GPUCC) |
+| `drivers/DitingMetal` | [pong-metal](https://github.com/Chengdong-Yu/pong-metal) | A730 Metal frontend for 22H374 with GOP scanout |
+| `drivers/DitingPower` | [pong-power](https://github.com/Chengdong-Yu/pong-power) | ADSP PAS1, CS35L41 amps, NT37705 DCS backlight, battery |
+| `drivers/DitingUsb` | [pong-usb](https://github.com/Chengdong-Yu/pong-usb) | SM8475 DWC3/eUSB2 + NXP repeater, 32 KiB DMA / SID0 |
+| `drivers/DitingWifi` | [pong-wifi](https://github.com/Chengdong-Yu/pong-wifi) | QCA6490 over PCIe0 + MHI + ath11k, SID `0x1c01` |
+| `drivers/DitingBootCapture` | [pong-boot-capture](https://github.com/Chengdong-Yu/pong-boot-capture) | Bounded diagnostic restart via PMK8350 SID0 SDAM7100 |
 
-The shared header `drivers/DitingProbe.h` stays in this repository. Clone with `--recurse-submodules`, or run `git submodule update --init --recursive` afterwards.
+The shared header `drivers/DitingProbe.h` stays in this repository. No submodules are required; the `drivers/` trees are complete in this checkout.
 
 ## Build
 
-Requires full Xcode with the iPhoneOS SDK, Python 3.12, dtc, selected Apple open source dependencies, matching 22H374 restore/ABI inputs and firmware obtained from Diting. Source revisions are pinned in feeds, lock and migration records.
+Requires Python 3.12, dtc, selected Apple open source dependencies, matching 22H374 restore/ABI inputs and firmware obtained from Diting. The kernel and boot image build on Linux via `scripts/linux/` plus `xnu-linux-toolchain` (ld64 is the hard dependency; xcodebuild/iPhoneOS SDK is not). Xcode is only needed for the one-time OS-window content preparation. Source revisions are pinned in feeds, lock and migration records.
 
 ```sh
 git clone https://github.com/UniXNU/UniXNU ../UniXNU-upstream

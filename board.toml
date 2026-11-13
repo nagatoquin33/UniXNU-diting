@@ -5,8 +5,8 @@ name = "diting"
 soc = "SM8475"
 soc_source = "sm8475"
 # The 22H374 profile ships in this repository at os-profiles/ and is installed into the
-# UniXNU checkout before resolving (scripts/install-device-profile.py), because
-# UniXNU/profiles/os/ has no 18.x profile yet.
+# UniXNU checkout before resolving (scripts/install-unixnu-inputs.py). The copy is
+# byte-identical to UniXNU/profiles/os/ipados-18.7.10-22H374 today; it predates upstream.
 os_profile = "ipados-18.7.10-22H374"
 description = "Redmi K50 Ultra (diting/SM8475): UniXNU bring-up from the Diting baseline"
 kit = "diting"

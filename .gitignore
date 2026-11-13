@@ -17,6 +17,9 @@
 *.ramdisk
 *.lzfse
 *.partial
+*.mbn
+*.elf
+*.fd
 *.dSYM/
 *.o
 *.a

@@ -11,10 +11,12 @@ Redmi K50 至尊版（`diting` / Qualcomm SM8475）的 UniXNU 格式 2 设备仓
 - 本设备：[格式 2 配置](migration/format2/README.zh.md)、[系统迁移](migration/ipados18/README.zh.md)、
   [结构化移植记录](porting.toml)、[AGENTS.md](AGENTS.md)
 
-## 当前状态（2026-11-11）
+## 当前状态（2026-11-13）
 
-- bring-up 第 6 阶段：UFS 三窗口（OS / SystemOS / Data）已发布，根卷按 UUID 匹配并挂载，
+- bring-up 第 6 阶段已过：UFS 三窗口（OS / SystemOS / Data）已发布，根卷按 UUID 匹配并挂载，
   `launchd` 已实机启动。
+- C1 bring-up 镜像（cpus=1、最小驱动）2026-11-12 实机到达 iOS 主屏（用户读屏确认）；C4 再达主屏
+  但触摸未归因。全开镜像仍有确定性内存损坏 panic，按执行计划单变量分轮排查（见 AGENTS.md）。
 - 已验证的设备布局（userdata `0x2F8A00..0x3ADF3FA`，4 KiB LBA）：
   OS `0x100000`、SystemOS `0x198100000`、Data `0x285000000`，SHNGROOT v1 清单；
   三个卷 UUID 与内核内嵌的 `XNU_OWNER_*_VOLUME_UUID` 一致。
@@ -26,14 +28,16 @@ Redmi K50 至尊版（`diting` / Qualcomm SM8475）的 UniXNU 格式 2 设备仓
 
 ## 组件与来源
 
-`drivers/` 是社区 Diting SM8475 实现（A730 / QCA6490 / SM8475 UFS 等）的子模块，本设备复用其
-板级代码。组件 ID 保持 `DitingPlatform24` 以保留来源、ABI 与验证记录；不要把它标成上游
+`drivers/` 是社区 SM8475 实现（A730 / QCA6490 / SM8475 UFS 等）的 vendored 副本，源自
+Chengdong-Yu 的 `pong-*` 仓库（曾以 submodule 引用，现为仓内普通目录），本设备复用其板级代码。组件 ID 保持 `DitingPlatform24` 以保留来源、ABI 与验证记录；不要把它标成上游
 A740/WCN7850 实现。Diting 的板级配置在 `board.toml`、`dts/diting.dts` 和 `drivers/`。
 
 ## 构建
 
-需要完整 Xcode（含 iPhoneOS SDK）、Python 3.12、dtc、匹配的 22H374 restore/ABI 输入和板级私有
-固件。源版本由 `feeds.toml`、`unixnu.lock` 和迁移记录固定；克隆时加 `--recurse-submodules`。
+需要 Python 3.12、dtc、匹配的 22H374 restore/ABI 输入和板级私有
+固件。源版本由 `feeds.toml`、`unixnu.lock` 和迁移记录固定。内核与启动镜像可用本仓
+`scripts/linux/` 工具链 + `xnu-linux-toolchain` 在 Linux 构建（ld64 为硬依赖，xcodebuild/iPhoneOS SDK 不是）；
+Xcode 仅 OS 窗口内容一次性制备需要。
 
 CI 使用 `.github/workflows/package.yml`（仅 `workflow_dispatch`），在 macOS runner 上构建
 kernel / payload / boot image，产物为 `diting-package` artifact。三个卷 UUID 是内核常量，换 userdata

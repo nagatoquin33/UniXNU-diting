@@ -1,0 +1,14 @@
+# Toolchain patches for non-macOS hosts (xnu-linux-toolchain).
+#
+# Application order note: the macOS build path links this directory as
+# patches/xnu and applies every *.patch by glob (build-ipados18-diting-macos.py),
+# while the Linux recipe lists them in patches/xnu-ipados18/series with 0000-
+# prefixes. Byte-identical duplicates live at patches/xnu-ipados18/0000-*.patch
+# on purpose — do not "dedupe" (AGENTS.md 2026-11-13b). This file documents
+# order only.
+
+linux-host-tools.patch
+linux-link-shims.patch
+llvm-clang-arm64-crypto-asm.patch
+portable-kalloc-type-builtins.patch
+iig-method-forwarders.patch
