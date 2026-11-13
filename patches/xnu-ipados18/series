@@ -1,4 +1,11 @@
+0000-iig-method-forwarders.patch
+0000-linux-host-tools.patch
+0000-linux-link-shims.patch
+0000-llvm-clang-arm64-crypto-asm.patch
+0000-portable-kalloc-type-builtins.patch
 0001-diting-darwin24.patch
+0002-diting-idle-cpu-preference.patch
+0003-diting-rootful-upgrade.patch
 zz-diting-main-native4k-cache-io.patch
 zzzz-diting-scanout-idle.patch
 zzzzz-diting-wake-scanout-alpha.patch
