@@ -371,7 +371,7 @@ new file mode 100644
 index 0000000..00feebd
 --- /dev/null
 +++ b/bsd/dev/diting_goodix.c
-@@ -0,0 +1,914 @@
+@@ -0,0 +1,935 @@
 +/* Goodix Berlin-D / Diting SM8475. Adapted from the earlier redwood_goodix.c
 + * (APSL 2.0). Hardware resources are the Diting live DT, checked against the
 + * NothingOSS cape pinctrl and waipio GCC source. No Redwood peripherals. */
@@ -417,7 +417,9 @@ index 0000000..00feebd
 +        property(entry,"max-y",&max_y,4) && se_phys==0x990000 && tlmm_phys==0xf000000 &&
 +        gcc_phys==0x100000 && rsc_phys==0x17a20000 && cmd_db_phys==0x80860000 &&
 +        gpio_offset==0x100000 && pins[0]==16 && pins[1]==17 && pins[2]==18 &&
-+        pins[3]==19 && pins[4]==21 && pins[5]==20 && max_x==1080 && max_y==2412;
++        pins[3]==19 && pins[4]==21 && pins[5]==20 && max_x!=0 && max_y!=0;
++    /* max-x/max-y are only a fallback: goodix_probe() replaces them with the chip's
++     * real IC_INFO axes (12200x27120 on this panel) before any report is scaled. */
 +}
 +
 +static inline uint32_t
@@ -463,6 +465,7 @@ index 0000000..00feebd
 +#define PIN_CS                  pins[3]
 +#define PIN_INT                 pins[4]      /* low = the chip has a report */
 +#define PIN_RESET               pins[5]     /* low = in reset */
++#define PIN_AVDD                71     /* goodix,avdd-gpio = <&tlmm 71 0>, active high */
 +#define PIN_FUNCTION_SPI        1       /* "qup15" */
 +
 +static void
@@ -497,7 +500,8 @@ index 0000000..00feebd
 +#define CMD_DB_SIZE             0x20000UL
 +#define RSC_PHYS                rsc_phys    /* the application processor's "DRV 2" */
 +#define RSC_SIZE                0x10000UL
-+#define TCS(reg)                (rsc + 0xd00 + (reg))           /* command slot set 0, an "active" one */
++#define TCS(reg)                (rsc + 0xd00 + 4 * 0x2a0 + (reg))  /* APSS DRV2 active TCS4, the set
++                                                                     * DitingPlatformResources validates */
 +#define TCS_IRQ_ENABLE          0x00
 +#define TCS_IRQ_STATUS          0x04
 +#define TCS_IRQ_CLEAR           0x08
@@ -617,18 +621,33 @@ index 0000000..00feebd
 +	return done;
 +}
 +
-+/* Diting DT: AVDD=pm8350c_l3 at 2.7 V, IOVDD=pm8350c_l12 at 1.8 V. */
++/* Diting live DT (soc/spi@990000/xiaomi_touch@0):
++ *   vdd-supply      = <&rpmh-regulator-ldoc2>        -> pm8350c_l2, 1.8 V (IOVDD)
++ *   goodix,avdd-gpio = <&tlmm 0x47 0>                -> TLMM GPIO 71 (AVDD switch)
++ * pm8350c_l3/ldoc3 is a 3.3 V always-on rail, not a 2.7 V touch AVDD; do not retune it.
++ * Android's goodix_ts_power_on() enables the vdd regulator and then drives avdd-gpio. */
 +static bool
 +io_supply_on(void)
 +{
-+    uint32_t avdd=rpmh_address("ldoc3"), iovdd=rpmh_address("ldoc12");
-+    if (!avdd || !iovdd || ((avdd>>16)&15)!=4 || ((iovdd>>16)&15)!=4) return false;
-+    uint32_t address[3]={iovdd,iovdd+4,iovdd+8}, data[3]={1800,1,7};
-+    if (!rpmh_write(address,data,3)) return false;
++    uint32_t iovdd=rpmh_address("ldoc2"), address, data;
++
++    if (!iovdd || ((iovdd>>16)&15)!=4) {
++        printf("goodix: IOVDD ldoc2 is not a PMIC-C resource in the command database (%#x)\n",iovdd);
++        return false;
++    }
++    address=iovdd; data=1800;
++    if (!rpmh_write(&address,&data,1)) return false;
 +    sleep_ms(3);
-+    address[0]=avdd;address[1]=avdd+4;address[2]=avdd+8;data[0]=2700;
-+    if (!rpmh_write(address,data,3)) return false;
-+    sleep_ms(15);return true;
++    address=iovdd+4; data=1;                     /* VRM_ENABLE */
++    if (!rpmh_write(&address,&data,1)) return false;
++    address=iovdd+8; data=4;                     /* init-mode the DT carries for pm8350c_l2 */
++    if (!rpmh_write(&address,&data,1)) return false;
++    sleep_ms(3);
++    gpio_output(PIN_AVDD,true,PULL_NONE,6);      /* AVDD switch: active high */
++    sleep_ms(10);
++    printf("goodix: power on: IOVDD ldoc2=%#x at 1800 mV, mode 4; AVDD gpio %u=%u\n",
++        iovdd,PIN_AVDD,gpio_get(PIN_AVDD));
++    return true;
 +}
 +
 +/* ---- clocks (GCC) -------------------------------------------------------------------------------- */
@@ -1280,10 +1299,12 @@ index 0000000..00feebd
 +void
 +diting_goodix_init(void)
 +{
-+    uint32_t enabled=0;thread_t thread;
++    uint32_t enabled=0;thread_t worker;
 +    if (!PE_parse_boot_argn("diting_touch",&enabled,sizeof(enabled)) || !enabled) return;
 +    if (!configuration()) {printf("Diting touch: missing/incompatible Diting DT; SKIP\n");return;}
-+    if (kernel_thread_start(touch_thread,NULL,&thread)==KERN_SUCCESS) thread_deallocate(thread);
++    printf("Diting touch: DT ok; SPI %#llx pins %u/%u/%u/%u int=%u reset=%u max %ux%u\n",
++        se_phys,pins[0],pins[1],pins[2],pins[3],PIN_INT,PIN_RESET,max_x,max_y);
++    if (kernel_thread_start(touch_thread,NULL,&worker)==KERN_SUCCESS) thread_deallocate(worker);
 +}
 +#endif /* DITING */
 diff --git a/bsd/dev/diting_input.c b/bsd/dev/diting_input.c
