@@ -1050,3 +1050,18 @@ work is the boot itself, not the inputs.
 - HIGH（疑似 bug/上游修复缺失）：①reportMediaState 绑 gHost.ready + transportFailure 清 ready → 任一 UFS 错误级联拆光全部介质（services17 同形，DitingUfsTransport.cpp:260/115/548）；②diting_smmu_lease_lock 对 UFS 是 weak_import——DitingPlatformResources 缺席时无串行编程 apps_smmu（:174-177），配合无 root 人格的启动时序构成与 E2a 乱写模型吻合的竞态入口 ★；③diting_ufs_stall=1 在默认 kernel_args，违反自有探针纪律（无界循环）；④ArmCpu 缺上游防御（unowned SPI panic vs 上游计数+屏蔽；drain 256 panic vs 上游 1M 阈值）；⑤DitingUsb 启动被音频类注册门控（DitingPower.cpp:34）；⑥缺 [ipsw.sha256]；⑦board.toml 声明 XnuPrelink 但 6 脚本实际用 kits/NativePrelink 两代并存。
 - E2a 关联修正：B 路否定了"固件 UTRL 收养=缺失修复"——上游该路径仅是诊断探针，生产路径同样用内核分配缓冲；当前最高嫌疑改为 lease weak_import + 无 root 人格时序的 SMMU 并发编程入口。
 - 修复批次：批1 文档合规（F1/F2/F3+LOW）、批2 配置对齐（F5/H6/H3/glob）、批3 代码修复（reportMediaState 解绑 / lease 硬依赖 / USB 解耦 / ArmCpu 回移 / 音频改 cs35l41 挂 C8 轮）。
+
+
+## 2026-11-13e — 批2 配置 + UFS 修复（commit 78ff23d）
+
+- `configs/diting-memory-sm8475.json`：`reserved` 按 `dts/diting.dts` reserved-memory 38 节点重建（旧值 REC 派生、ramoops `0x85200000` 陈旧），与 `allocatable` 交集 = 0；base+size 匹配的条目保留原可读名（30 个）。ADT 生成只消费 `allocatable`，此段为描述性数据。
+- `board.toml`：新增 `[ipsw.sha256]`——DeviceTree `acf9c611…`、StaticTrustCache `61ce2dc9…`（本地成员实算）；kernelcache/OS 等解压产物不钉（`migration-state image_hashes_used=false` 延续）。`unixnu.lock` 删除 `DitingPlatform24` 条目（本地 kit，lock 只记 git 源）。
+- `porting.toml`：paths 属主补 `platform-firmware/**`、`assets/**`、`kits/NativePrelink/**`、`tools/**`、`docs/**` 等；`metal2vulkan/0011` 重号修复——未被脚本引用的 `bounded-command-stage-summary` 改 `0014`。
+- `drivers/NativeUfs/DitingUfsTransport.cpp` 三处：
+  1. `reportMediaState` 解绑 `gHost.ready`（介质存在性是窗口属性；一次 IO 失败不再级联撤下全部已发布介质——services17 事故形态）
+  2. `diting_smmu_lease_lock/unlock` 从"缺席则静默无锁编程"改为硬依赖：符号缺席则 transportFailure（共享 SMMU 写必须串行；无锁路径正是 E2a 乱写模型嫌疑）
+  3. `diting_ufs_stall` 从 `for(;;)` 无界改 180s 有界窗口后继续启动（违 optional-probe "return to normal boot" 政策项修复）
+- PAC patch 复核：`HAS_NATIVE_PAC` 双门控（`__arm64e__` && `XNU_DITING_NATIVE_PAC`），arm64 构建惰性；arch-darwin24.series 注释明确"设备聚合内携带已适配的 arch 变更"——分层是有意设计，不动。
+- C3 镜像已备：`build-work/b1-darwinboot24/diting-unixnu-uefi-c3-cpus8.img` sha256 `e2d298a903606d4f977159dfac85d4f56857fe1dda403bcb41cbc03c366b3af8`（C1 `285e6afa` 仅 `cpus=1`→`cpus=8`，其余 39 token 不变）；`check-loader-adt-contract.py` PASS。设备在场时 `fastboot boot` 即可定多核协因子。
+- `diting_disable_swap=1` 复核：patch 实现保内存压缩器、置 `swap_is_present/active/freezer_swap_is_active=FALSE`，与 CONFIG_FREEZE_SUSPENDED_MIN 阈值常量不冲突——配置自洽。
+- 待办更新：Sheng `native_ufs_store_*` 持久化导出移植中（RamBlock PersistOverlay 弱引用目前全空、盘内状态易失）；ArmCpu/ArmDTPlatform/DitingPower/Wi-Fi 构建修复在途。
