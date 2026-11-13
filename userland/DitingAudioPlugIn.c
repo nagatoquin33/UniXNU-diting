@@ -411,7 +411,7 @@ static OSStatus propertyData(AudioServerPlugInDriverRef d, AudioObjectID o, pid_
         // This ASPL implements shared output IO, without isolated callbacks.
         case 'siso': REPLY(UInt32, 0);
         // 22H374 kAudioDevicePropertyWantsDisplayRouting, also UInt32.
-        // TFA9873 speakers are not an HDMI/DisplayPort audio endpoint.
+        // The speaker path is not an HDMI/DisplayPort audio endpoint.
         case 'drte': REPLY(UInt32, 0);
         case kAudioDevicePropertyDeviceCanBeDefaultDevice: REPLY(UInt32, ready() && a->mScope!=kAudioObjectPropertyScopeInput);
         case kAudioDevicePropertyDeviceCanBeDefaultSystemDevice: REPLY(UInt32, ready() && a->mScope!=kAudioObjectPropertyScopeInput);

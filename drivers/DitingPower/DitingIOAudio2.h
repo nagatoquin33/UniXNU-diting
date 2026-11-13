@@ -345,6 +345,6 @@ static bool diting_audio2_publish(IOService *provider) {
  // the existing power archive, with its normal late metaclass registration.
  auto d=OSTypeAlloc(IOAudio2Device);if(!d)return false;
  if(!d->init()||!d->attach(provider)||!d->start(provider)){d->detach(provider);d->release();return false;}
- ditingAudio2=d;d->registerService();IOLog("DitingAudio2: real TFA9873 native stereo output published, no capture\n");return true;
+ ditingAudio2=d;d->registerService();IOLog("DitingAudio2: native stereo output published (cs35l41 amp path pending), no capture\n");return true;
 }
 extern "C" bool diting_audio2_fill(int32_t *dst,unsigned frames) {return ditingAudio2&&ditingAudio2->fill(dst,frames);}

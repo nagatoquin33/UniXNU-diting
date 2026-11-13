@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: BSD-2-Clause-Patent
  * Diting SM8475 stereo playback. Qualcomm wire codecs and the shared-ring ABI
- * come from UniXNU-sheng; board clocks, SID, TFA9873 and MI2S route are Diting.
+ * come from UniXNU-sheng; board clocks, SID and MI2S route are Diting. The
+ * Pong TFA9873 amplifier path below is retired: Diting's live DT carries
+ * cs35l41@i2c@880000 (plus the wcd/WSA path) and its 0xa94000 SE is the
+ * disabled ir-spi engine, so sheng_audio_probe keeps the worker unstarted.
  * No tone, calibration, OTP/MTP programming, or unimplemented input endpoint.
  */
 #include <IOKit/IOLib.h>
@@ -33,6 +36,11 @@ namespace {
 constexpr unsigned PeriodFrames=480,PeriodBytes=480*2*4,Slots=8,Lead=30*480,Port=0x2001;
 constexpr unsigned BufferBytes=DitingLowDma::AudioBytes;
 static_assert(Slots*PeriodBytes<=BufferBytes,"audio periods must stay in their low DMA partition");
+// Diting's speaker amplifiers are the CS35L41 pair on i2c@880000; the Pong
+// TFA9873 pair this file was written for is absent. The SE at 0xa94000 that
+// the bus setup below opens is this board's disabled ir-spi engine, so the
+// whole TFA9873 hardware path stays compiled but must never run.
+constexpr bool kDitingTfa9873Present=false;
 struct Window {
  IOMemoryMap *map=nullptr;volatile uint8_t *v=nullptr;
  bool open(uint64_t pa,size_t n,IOOptionBits cache=kIOMapInhibitCache){auto d=IODeviceMemory::withRange(pa,n);map=d?d->map(kIOMapAnywhere|cache):nullptr;if(d)d->release();v=map?(volatile uint8_t *)map->getVirtualAddress():nullptr;return v;}
@@ -125,14 +133,18 @@ void pin(unsigned n,unsigned config,int high){
  if(high>=0)pins.w(reg+4,high?2:0);
 }
 bool setupBus(){if(!gcc.open(0x100000,0xa0000)||!pins.open(0xf100000,0xd0000))return false;gcc.w(0x62008,gcc.r(0x62008)|(15u<<18)|(1u<<27));const unsigned gates[]={0x3314cu,0x33140u,0x28004u,0x28008u,0x28610u};for(unsigned o:gates){uint64_t end=nowMs()+100;while((gcc.r(o)&(1u<<31))&&!(gcc.r(o)&2u)&&nowMs()<end)IOSleep(1);if((gcc.r(o)&(1u<<31))&&!(gcc.r(o)&2u))return false;}
- // Diting's i2c@a94000 pinctrl-0 is qupv3_se13_i2c_active: GPIO48/49,
- // qup13 mux1, pull-up / 2mA. GPIO52/53 mux2 selects QSPI, not this bus.
+ // Retired Pong wiring, never reached on diting (gated in sheng_audio_probe).
+ // Pong's i2c@a94000 pinctrl-0 is qupv3_se13_i2c_active: GPIO48/49, qup13
+ // mux1, pull-up / 2mA; GPIO52/53 mux2 selects QSPI, not this bus. On diting
+ // 0xa94000 is the disabled ir-spi engine and the real amps are the CS35L41
+ // pair on i2c@880000, which needs its own pinctrl and reset sequence.
  const unsigned i2cPins[]={48,49};for(unsigned n:i2cPins)pin(n,3u|(1u<<2),-1);
  // Neither Diting TFA node supplies reset-polarity. Nothing's tfa98xx driver
  // therefore defaults to active HIGH: assert for 10ms, release LOW for 10ms.
  // Leaving these high holds both amps in reset, so their revision read NACKs.
  pin(1,1u|(1u<<9),1);pin(89,1u|(1u<<9),1);IOSleep(10);
  pin(1,1u|(1u<<9),0);pin(89,1u|(1u<<9),0);IOSleep(10);
+ // Dead on diting: 0xa94000 is the disabled ir-spi SE, not an amp I2C bus.
  if(!se.open(0xa94000,0x4000))return false;unsigned proto=(se.r(GENI_FW_REVISION)>>8)&255;if(proto!=GENI_PROTO_I2C){IOLog("DitingAudio: QUP1 SE5 firmware protocol=%u; I2C firmware required\n",proto);return false;}
  unsigned level=0xff;for(unsigned i=0;i<8;i++){unsigned cfg=gcc.r(0x28618+0x1c+4*i);if(((cfg>>8)&7)==0&&((cfg>>12)&3)==0&&(cfg&31)<=1){level=i;break;}}
  if(level==0xff)return false;
@@ -417,4 +429,18 @@ void worker(void *,wait_result_t){uint64_t end=nowMs()+90000;while(!up&&nowMs()<
 extern "C" IOBufferMemoryDescriptor *sheng_audio_memory(uint32_t type){if(!serving)return nullptr;auto d=type==0?control:type==1?outRing:nullptr;if(d)d->retain();return d;}
 extern "C" int sheng_audio_request(uint32_t selector){if(!serving)return -6;if(selector>1)return -45;if(selector==0){__atomic_add_fetch(&requestEpoch,1,__ATOMIC_ACQ_REL);__atomic_and_fetch(&ctl->state,~ShengAudioOutputStartFailed,__ATOMIC_RELEASE);}__atomic_store_n(&wanted,selector==0?1u:0u,__ATOMIC_RELEASE);IOLockWakeup(lock,&count,false);return 0;}
 extern "C" bool diting_audio_start_ready(void){return __atomic_load_n(&serving,__ATOMIC_ACQUIRE) && __atomic_load_n(&wanted,__ATOMIC_ACQUIRE) && __atomic_load_n(&startedEpoch,__ATOMIC_ACQUIRE)==__atomic_load_n(&requestEpoch,__ATOMIC_ACQUIRE) && (__atomic_load_n(&ctl->state,__ATOMIC_ACQUIRE)&ShengAudioOutputRunning);}
-extern "C" void sheng_audio_probe(void){unsigned mode=0;PE_parse_boot_argn("diting_audio",&mode,sizeof mode);if(!mode||lock)return;lock=IOLockAlloc();if(!lock)return;const ShengAdspClient client={state,receive};channel=sheng_adsp_channel("adsp_apps",512,20,1,&client,nullptr);thread_t t=nullptr;if(!channel||kernel_thread_start(worker,nullptr,&t)!=KERN_SUCCESS){fail(1,-12);return;}thread_deallocate(t);}
+extern "C" void sheng_audio_probe(void){
+ unsigned mode=0;PE_parse_boot_argn("diting_audio",&mode,sizeof mode);
+ if(!mode||lock)return;
+ // TFA9873 absent on diting; cs35l41@i2c@880000 pending. The worker's bus
+ // setup would map the disabled ir-spi SE at 0xa94000 as GENI I2C and probe
+ // amplifiers that are not there, so no channel, thread, SE MMIO, GPIO mux
+ // or amp access may start. The failure stays local: stats report the
+ // unsupported board and no sibling transport is blocked.
+ if(!kDitingTfa9873Present) {
+  IOLog("DitingAudio: TFA9873 absent on diting; cs35l41@i2c@880000 pending; stereo output not implemented\n");
+  native_audio_stats[1]=-45;
+  return;
+ }
+ lock=IOLockAlloc();if(!lock)return;const ShengAdspClient client={state,receive};channel=sheng_adsp_channel("adsp_apps",512,20,1,&client,nullptr);thread_t t=nullptr;if(!channel||kernel_thread_start(worker,nullptr,&t)!=KERN_SUCCESS){fail(1,-12);return;}thread_deallocate(t);
+}

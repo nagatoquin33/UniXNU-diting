@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
 // Diting/SM8475 UFS transport. Writes are boot-arg gated and limited to the
-// declared SHNGROOT windows, including the independent persistent APFS Data.
+// declared SHNGROOT windows, including the independent persistent APFS Data,
+// and to the diting_data_persist store window at the end of userdata.
 // Shared queue/protocol code derives
 // from Sheng; board addresses and stream ID come from Diting's live DT.
 #include <IOKit/IOService.h>
@@ -232,6 +233,11 @@ static bool hostBringUp() {
   return true;
 }
 }
+
+// The persistent Data store rides on the same command path and the validated
+// root layout. Its exports stay at file scope: weak-import consumers
+// (NativeRamBlock) cannot resolve symbols out of the anonymous namespace.
+#include "DitingStore.h"
 
 class DitingUfsBlock : public IOBlockStorageDevice {
   OSDeclareDefaultStructors(DitingUfsBlock)
@@ -600,6 +606,11 @@ extern "C" bool diting_ufs_transport_start(IOService *provider) {
       layout.userdataLast >= gHost.blocks)
     return transportFailure("userdata geometry changed");
   if (layout.manifestStatus) return transportFailure("invalid SHNGROOT manifest/hash/bounds");
+  // The persistent store borrows the same validated layout: the partition
+  // bounds, the flashed-image size and the GPT checksums its before/after
+  // comparison needs. A rejected manifest keeps the store shut.
+  gStoreGeometry = { true, layout.userdataFirst, layout.userdataLast, layout.imageBytes,
+                     layout.gptEntriesLba, layout.gptHeaderCrc, layout.gptEntriesCrc, layout.gptEntryCount };
   static const struct { const char *name, *product, *signature; unsigned offset; } wanted[] = {
     {"OS", "Diting OS root", "EFI PART", 512},
     {"SystemOS", "Diting SystemOS", "NXSB", 32},

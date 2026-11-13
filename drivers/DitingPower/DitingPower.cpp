@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause-Patent */
 #include <IOKit/IOService.h>
+#include <IOKit/IOLib.h>
 #include <libkern/OSKextLib.h>
 #include <mach/kmod.h>
 #include <pexpert/pexpert.h>
@@ -31,7 +32,11 @@ void diting_power_start_optional(void) {
  diting_rpmh_init();
  // Register the transport classes independently of ADSP readiness. Actual
  // USB/audio services still publish only after their own hardware succeeds.
- if(diting_audio_service_classes_ready())DitingUsb::start();
+ // Audio registration covers the board's (currently retired) speaker path;
+ // it is reported for diagnostics but must never gate the USB transport.
+ const bool audioClasses=diting_audio_service_classes_ready();
+ IOLog("DitingPower: audio transport classes %s; USB starts regardless\n",audioClasses?"registered":"unavailable");
+ DitingUsb::start();
  unsigned enabled=0;PE_parse_boot_argn("diting_adsp",&enabled,sizeof(enabled));
  if(enabled!=2)return;
  static uint32_t started;
