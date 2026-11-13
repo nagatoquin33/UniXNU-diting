@@ -1039,3 +1039,12 @@ work is the boot itself, not the inputs.
 - **执行计划 §5 分轮表（每轮一变量，设备在场时按此走）**：C1 bring-up 基线（已过 G4/G5 桌面）→ C2 +diting_usb → C3 +cpus=8 → C4 触摸（已跑，未归因）→ C5 +wifi → C6 +adreno → C7 +metal → C8 音频。e2dbg 式全开镜像与该计划矛盾，AGENTS.md:961 已自记"不是单变量"。
 - **硬件事实**（C0/TWRP）：触摸 = Goodix Berlin-D GT9916（firmware `goodix_firmware_l12`，1220x2712，IRQ363，GPIO reset20/irq21/avdd71，SPI 0x990000）；功放未定（live DT 双 cs35l41 enabled、wsa883x disabled，Pong TFA9873 不存在）；ramoops@a7000000 在 dts reserved 内。
 - **回退资产清单**（阶段0，不得删）：`diting-boot-launchd-unsecure.img` `cb56ac9d…`、`greenI2-log-menu.img`、`prepared-420734-os.img`、`windows/Data.img`（337CF716）、`ipados18-source/{OS,SystemOS,AppOS}.dmg`、`diting-recovery-boot.img`。
+
+# 2026-11-13d — 按官方契约与上游的全仓审视（4 路只读审计 + 可执行检查）
+
+- 方法：对照 `UniXNU/docs/{porting,reference}/` 契约、`UniXNU-sheng` 参照仓、`UniXNU/drivers|kits`、soc-seed；报告全文在 `D:/ai/diting/audit-20261113-本地成果审视.md`。
+- 执行验证 PASS：porting-record 检查 33 区、package.sh 与模板字节相同（f7b8e3ea…）、feeds 全 40-hex 钉版、unixnu defconfig 官方 CLI 解析成功、dtc 编译 EXIT=0、kernel_args 806B≤1023、仓内零违例二进制（wifi *.bin 被 .gitignore 正确挡住）、os-profile 与上游同字节、[device] 逐字匹配 board、13 必需区齐。
+- FAIL（必修）：①porting.toml:355 `[[areas]]` 复数拼写使 safari-metal-residency159 被 checker/站点静默丢弃；②README_EN 硬件进度表把 Pong 实机结论（触摸/双TFA9873/WiFi/Data128GB）发布为 diting 现状；③README/porting.toml/workflow 的 submodule 叙述已随 vendored 失效（无 .gitmodules）；④DitingAudio 的 TFA9873@0x34/35+GENI 0xa94000 指向不存在硬件（live DT 双 cs35l41@40/42 on i2c@880000，0xa94000 是 disabled 的 ir-spi SE），会真机 NACK/误触；⑤diting-memory-sm8475.json reserved 陈旧（ramoops 写 0x85200000 vs dts 0xa7000000 等 5 处）。
+- HIGH（疑似 bug/上游修复缺失）：①reportMediaState 绑 gHost.ready + transportFailure 清 ready → 任一 UFS 错误级联拆光全部介质（services17 同形，DitingUfsTransport.cpp:260/115/548）；②diting_smmu_lease_lock 对 UFS 是 weak_import——DitingPlatformResources 缺席时无串行编程 apps_smmu（:174-177），配合无 root 人格的启动时序构成与 E2a 乱写模型吻合的竞态入口 ★；③diting_ufs_stall=1 在默认 kernel_args，违反自有探针纪律（无界循环）；④ArmCpu 缺上游防御（unowned SPI panic vs 上游计数+屏蔽；drain 256 panic vs 上游 1M 阈值）；⑤DitingUsb 启动被音频类注册门控（DitingPower.cpp:34）；⑥缺 [ipsw.sha256]；⑦board.toml 声明 XnuPrelink 但 6 脚本实际用 kits/NativePrelink 两代并存。
+- E2a 关联修正：B 路否定了"固件 UTRL 收养=缺失修复"——上游该路径仅是诊断探针，生产路径同样用内核分配缓冲；当前最高嫌疑改为 lease weak_import + 无 root 人格时序的 SMMU 并发编程入口。
+- 修复批次：批1 文档合规（F1/F2/F3+LOW）、批2 配置对齐（F5/H6/H3/glob）、批3 代码修复（reportMediaState 解绑 / lease 硬依赖 / USB 解耦 / ArmCpu 回移 / 音频改 cs35l41 挂 C8 轮）。
