@@ -176,7 +176,8 @@ for base in (os.environ.get('DITING_NATIVE_DRIVER_SOURCE'), os.environ.get('UNIX
     board = (Path(base) / 'board.toml').resolve()
     if not board.is_file():
         continue
-    relative = tomllib.loads(board.read_text()).get('package', {}).get('unixnu')
+    with board.open('rb') as handle:
+        relative = tomllib.load(handle).get('package', {}).get('unixnu')
     if relative:
         print((board.parent / relative / 'kits/XnuPrelink').resolve())
         sys.exit(0)

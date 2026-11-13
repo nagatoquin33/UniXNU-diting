@@ -47,6 +47,12 @@ def main():
   host=next((v for v in nodes.values() if v.get('compatible')==b'qcom,pci-msm\0'),None)
   if host is None:
    raise RuntimeError(f'{dtb} carries no qcom,pci-msm host; set DITING_LIVE_DTB to the live device tree')
+  required=('qcom,phy-sequence','qcom,phy-status-offset','qcom,phy-status-bit','qcom,phy-power-down-offset',
+            'qcom,aux-clk-freq','qcom,ep-latency','max-clock-frequency-hz',
+            'wlan-enable-gpios','reset-gpios','clkreq-gpios','wake-gpios','xo-clk-gpios')
+  missing=[key for key in required if key not in host]
+  if missing:
+   raise RuntimeError(f'{dtb} lacks the live-tree Wi-Fi properties {missing}; set DITING_LIVE_DTB to the live device tree')
   phy=fdt.cells(host,'qcom,phy-sequence')
   if len(phy)%3:raise RuntimeError('Malformed selected Diting PHY sequence')
   profile['pcie']['phy_sequence']=[phy[i:i+3] for i in range(0,len(phy),3)]
