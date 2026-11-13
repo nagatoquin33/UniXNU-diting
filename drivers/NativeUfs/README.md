@@ -30,6 +30,7 @@ Diting 专属实现，上游没有对应组件（`UniXNU/ShengUfs` 是 SM8550 �
 - `RootQueue.h`、`RootCommands.h`、`TransferPoll.h`、`RootTransportLayout.h`：队列接管、命令路径、单槽完成策略与 UCD/PRDT/DMA 布局；宿主故障注入工装复用同一份代码，只替换 MMIO 与同步原语。
 - `RootDiagnostics.h`：被动快照格式化，不做任何信任或发布判断。
 - `SmmuTakeover.h`：从 UEFI 接过 SMMU 的上下文编程，DitingPower、DitingUsb、DitingWifi 共用。
+- `DitingStore.h`：持久化 store 窗口。`diting_data_persist` boot-arg 为 0（默认）时关闭；1 表示只读恢复，2 表示读写持久化（同时需要 `diting_ufs_readwrite=1`）。窗口取 userdata 分区末尾、`diting_data_reserve`（MiB，默认 0）保留区之下，且不得与 SHNGROOT 镜像及其 4 MiB 保护区重叠。对外导出 `native_ufs_store_mode/open/read/write/sync/gpt_check`（`extern "C"`，供 NativeRamBlock 弱引用）；写路径复用 WRITE(10) FUA。
 
 ## 许可
 

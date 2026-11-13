@@ -227,7 +227,7 @@ static bool hostBringUp() {
   uint32_t last = loadBe32(gHost.virt + kDataOffset), blockSize = loadBe32(gHost.virt + kDataOffset + 4);
   if (!last || last == 0xffffffff || blockSize != 4096) return transportFailure("unsupported LUN geometry");
   gHost.blocks = uint64_t(last) + 1;
-  IOLog("DITING_UFS: transport ready LUN=0 block=4096 blocks=%llu; WRITE(10) FUA=%s; writes stay inside declared SHNGROOT windows\n",
+  IOLog("DITING_UFS: transport ready LUN=0 block=4096 blocks=%llu; WRITE(10) FUA=%s; writes stay inside declared SHNGROOT windows and the persist store\n",
         gHost.blocks, gHost.writable ? "enabled" : "disabled");
   __atomic_store_n(&gWifiUfsReady,1,__ATOMIC_RELEASE);
   return true;

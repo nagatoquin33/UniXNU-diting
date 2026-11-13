@@ -32,7 +32,22 @@ volatile uint64_t armcpu_cntv_state[5];
 /* Read-only feature evidence; key writes/instruction execution are separate
  * arm64e prerequisites. Never advertise PAC from these registers alone. */
 volatile uint64_t armcpu_pac_features[8][3];
+/* Same names as UniXNU upstream: an SPI nobody claimed is counted and its
+ * last INTID kept; IRQ drains over 128 are counted and the longest drain
+ * recorded. Upstream secondary bring-up records one failure code per
+ * logical ID: 1 MPIDR mismatch, 2 redistributor wake, 3 remote GIC prepare,
+ * 4 ml_processor_register; 5 (Diting) a topology nub that failed
+ * init/attach/start, 6 (Diting) a firmware-rejected PSCI start. */
+volatile uint64_t armcpu_spi_unhandled;
+volatile uint32_t armcpu_spi_unhandled_id;
+volatile uint64_t armcpu_irq_long_drains;
+volatile uint32_t armcpu_irq_drain_most;
+volatile uint32_t armcpu_smp_fail[8];
 }
+
+/* Upstream gates the only interrupt-loop panic on boot-arg
+ * armcpu-diagnostics=1; counting stays unconditional. */
+static bool gDiagnostics;
 
 #if DITING_DARWIN_MAJOR >= 24
 /* Pure scheduler hint: logical IDs follow the selected Diting DT's sorted
@@ -101,13 +116,17 @@ static uint64_t counter(void)
   return value;
 }
 
+// Polls until the bits clear. The limit counts polls as well as time, the
+// upstream fix for a timed-out GIC wake under a hypervisor: the counter runs
+// on while the host has this vCPU's thread descheduled, so a time limit
+// alone (it was 100 ms) can fail a wait that had no chance to complete.
 static bool waitClear(uintptr_t base, unsigned offset, uint32_t mask)
 {
   uint64_t frequency;
   __asm__ volatile("mrs %0, cntfrq_el0" : "=r"(frequency));
   uint64_t started = counter();
-  while ((read32(base, offset) & mask) != 0) {
-    if (counter() - started > frequency / 10) return false;
+  for (unsigned polls = 0; (read32(base, offset) & mask) != 0; ++polls) {
+    if (polls > 100000 && counter() - started > frequency) return false;
   }
   return true;
 }
@@ -194,9 +213,12 @@ bool ArmCpu::wakeRedistributor(bool local)
   write32(redist, 0x14, read32(redist, 0x14) & ~2U);
   if (!waitClear(redist, 0x14, 4)) return false;
   uintptr_t sgi = redist + 0x10000;
-  write32(sgi, 0x180, kSgiPpiEnable);
+  // Upstream first masks and deactivates every local SGI/PPI line: a pending
+  // interrupt the firmware left enabled would otherwise reach a CPU that has
+  // no handler for it. Only the lines the driver uses are enabled again.
+  write32(sgi, 0x180, 0xffffffff);
+  write32(sgi, 0x280, 0xffffffff);
   write32(sgi, 0x80, read32(sgi, 0x80) | kSgiPpiEnable);
-  write32(sgi, 0x280, kSgiPpiEnable);
   write32(sgi, 0x400, (read32(sgi, 0x400) & 0xffffff00U) | 0x80U);
   write32(sgi, 0x418, (read32(sgi, 0x418) & 0x00ffffffU) | 0x80000000U);
   if (!local) write32(sgi, 0x100, kSgiPpiEnable);
@@ -273,6 +295,9 @@ bool ArmCpu::prepareGic(void)
 
 bool ArmCpu::start(IOService *provider)
 {
+  unsigned diagnostics = 0;
+  PE_parse_boot_argn("armcpu-diagnostics", &diagnostics, sizeof(diagnostics));
+  gDiagnostics = diagnostics != 0;
   auto reg = OSDynamicCast(OSData, provider->getProperty("reg"));
   if (!reg || reg->getLength() != 4) return false;
   uint32_t physical;
@@ -330,13 +355,30 @@ bool ArmCpu::start(IOService *provider)
       int number = ml_get_cpu_number(id);
       if (number < 0 || number >= 8 || gCpus[number]) continue;
       ArmCpu *cpu = new ArmCpu;
-      if (!cpu || !cpu->init() || !cpu->attach(nub) || !cpu->start(nub))
-        panic("ArmCpu: cannot register topology CPU %d", number);
+      /* Upstream tolerates a secondary that never joins: it records
+       * armcpu_smp_fail and parks the core. Diting registers every CPU
+       * before installing the shared interrupt controller, and Darwin 24's
+       * processor_wait_for_start() demands all of them online, so an absent
+       * core panics later either way. Fail here instead, with the CPU's
+       * identity and the stage that failed. */
+      const char *stage = cpu == nullptr ? "alloc"
+          : !cpu->init() ? "init"
+          : !cpu->attach(nub) ? "attach"
+          : !cpu->start(nub) ? "start" : nullptr;
+      if (stage != nullptr) {
+        armcpu_smp_fail[number & 7] = 5;
+        panic("ArmCpu: cannot register topology CPU %d (MPIDR %#x) at %s",
+            number, id, stage);
+      }
     }
     iter->release();
   }
-  if (armcpu_registered != ml_get_cpu_count())
+  if (armcpu_registered != ml_get_cpu_count()) {
+    for (unsigned i = 0; i < ml_get_cpu_count(); i++) {
+      if (!gCpus[i]) IOLog("ArmCpu: CPU %u missing from registry\n", i);
+    }
     panic("ArmCpu: incomplete CPU registry (%u/%u)", armcpu_registered, ml_get_cpu_count());
+  }
   IOLog("ArmCpu: CPU registered, install interrupt controller\n");
   gController = controller = new IOCPUInterruptController;
   if (!controller || controller->initCPUInterruptController(armcpu_registered, armcpu_registered) != kIOReturnSuccess)
@@ -350,9 +392,10 @@ bool ArmCpu::start(IOService *provider)
     ArmCpu *cpu = gCpus[i];
     cpu->controller = controller;
     controller->setCPUInterruptProperties(cpu->getProvider());
-    if (controller->registerInterrupt(cpu->getProvider(), i, cpu,
-                                      &ArmCpu::dispatch, nullptr) != kIOReturnSuccess)
-      panic("ArmCpu: IRQ handler registration failed for CPU %u", i);
+    IOReturn irq = controller->registerInterrupt(cpu->getProvider(), i, cpu,
+                                                 &ArmCpu::dispatch, nullptr);
+    if (irq != kIOReturnSuccess)
+      panic("ArmCpu: IRQ handler registration failed for CPU %u: %#x", i, irq);
   }
 #if DITING_DARWIN_MAJOR >= 24
   // Darwin 24 separates first boot from processor_start(), and invokes
@@ -380,6 +423,7 @@ bool ArmCpu::start(IOService *provider)
   for (unsigned i=0; i<ml_get_cpu_count(); i++) {
     if (gCpus[i] == this) continue;
     status = processor_start(gCpus[i]->machProcessor);
+    if (status != KERN_SUCCESS) armcpu_smp_fail[i & 7] = 6;
     IOLog("ArmCpu: CPU %u PSCI start %s result=%d\n", i,
         status == KERN_SUCCESS ? "PASS" : "FAIL (offline)", status);
   }
@@ -400,6 +444,15 @@ bool ArmCpu::start(IOService *provider)
   IOLog("ArmCpu: boot CPU running with GICv3/CNTV ctl=%#llx cval=%#llx now=%#llx freq=%#llx daif=%#llx irq=%llu\n",
       ctl, cval, now, frequency, daif, armcpu_timer_interrupts);
 #if DITING_DARWIN_MAJOR >= 24
+  /* Upstream ArmCpu owns no frequency policy at all. The Sheng reference
+   * (UniXNU-sheng package/CpuFreqProbe.cpp) starts its EPSS votes from the
+   * late platform probe that runs after IOKitBSDInit, i.e. after the
+   * DSP/power drivers; Diting's only later hook lives in the XNU patch,
+   * not in this driver. This call is still not the first EPSS access:
+   * DitingCpuPolicy::start() only spawns its worker, whose IOSleep(3000)
+   * holds all EPSS MMIO until the power-layer probes have had their own
+   * start(). Remaining gap vs upstream order: the vote attempt is armed
+   * here, not after the DSP/power layer. */
   DitingCpuPolicy::start();
   IOLog("ArmCpu: all registered CPUs available; idle preference X2, A710, A510 (no affinity binding)\n");
 #endif
@@ -418,7 +471,24 @@ void ArmCpu::initCPU(bool boot)
     armcpu_pac_features[logicalId][2]=sctlr;
   }
   if (logicalId != static_cast<uint32_t>(ml_get_boot_cpu_number())) {
-    if (!wakeRedistributor(true)) panic("ArmCpu: CPU %u redistributor did not wake", logicalId);
+    /* UniXNU initCPU checks that the core answering CPU_ON is the one the
+     * DT named, then that its redistributor frame woke. Upstream records
+     * armcpu_smp_fail and parks the failed core; on Darwin 24
+     * processor_wait_for_start() still requires every registered CPU
+     * online, so parking would only move the panic and lose the cause.
+     * Record the same codes and panic here with the core's identity. */
+    uint64_t seen;
+    __asm__ volatile("mrs %0, mpidr_el1" : "=r"(seen));
+    if ((seen & 0xffff) != (affinity & 0xffff)) {
+      armcpu_smp_fail[logicalId & 7] = 1;
+      panic("ArmCpu: CPU %u started with MPIDR %#llx, expected %#llx",
+          logicalId, (unsigned long long)seen, (unsigned long long)affinity);
+    }
+    if (!wakeRedistributor(true)) {
+      armcpu_smp_fail[logicalId & 7] = 2;
+      panic("ArmCpu: CPU %u (MPIDR %#llx) redistributor did not wake",
+          logicalId, (unsigned long long)affinity);
+    }
   }
   if (!interruptInstalled) {
     // ml_install_interrupt_handler writes the *current* CPU's cpu_data.
@@ -440,11 +510,26 @@ void ArmCpu::dispatch(void *target, void *, void *, int)
 
 void ArmCpu::interrupt(void)
 {
-  for (unsigned drained = 0; drained < 256; drained++) {
+  // UniXNU drains until nothing is pending: a burst of timer pops is normal
+  // under a hypervisor, so only a source that never quiesces is a fault -
+  // a million acknowledgements in one drain - and that check exists only
+  // when boot-arg armcpu-diagnostics=1 asked for it. Every drain is counted.
+  for (unsigned drained = 0;;) {
     uint64_t id;
     __asm__ volatile("mrs %0, icc_iar1_el1" : "=r"(id));
     uint32_t intid = static_cast<uint32_t>(id & 0xffffff);
-    if (intid >= 1020) return;
+    if (intid >= 1020) {
+      if (drained > 128)
+        __atomic_fetch_add(&armcpu_irq_long_drains, 1, __ATOMIC_RELAXED);
+      if (drained > armcpu_irq_drain_most)
+        armcpu_irq_drain_most = drained;
+      return;
+    }
+    ++drained;
+    if (gDiagnostics && drained > 1000000)
+      panic("ArmCpu: IRQ drain exceeds 1000000 id=%u timer=%llu IPI=%llu",
+          intid, (unsigned long long)armcpu_timer_interrupts,
+          (unsigned long long)armcpu_ipi_interrupts);
     if (intid == 27) {
       __atomic_fetch_add(&armcpu_timer_interrupts, 1, __ATOMIC_RELAXED);
       rtclock_intr(0);
@@ -455,8 +540,22 @@ void ArmCpu::interrupt(void)
       const uint32_t used=__atomic_load_n(&gSpiUsed,__ATOMIC_ACQUIRE);
       SpiOwner *owner=nullptr;
       for(uint32_t i=0;i<used;i++)if(gSpi[i].id==intid){owner=&gSpi[i];break;}
-      if(!owner)panic("ArmCpu: unowned SPI %u",intid);
       const uint32_t word=(intid/32)*4,bit=1u<<(intid%32);
+      if (!owner) {
+        /* UniXNU semantics: an SPI without a handler is counted and disabled
+         * (ICENABLER), never fatal. A level source nobody services must not
+         * scream forever, but a stray line must not cost the boot CPU. */
+        if (dist == 0)
+          panic("ArmCpu: unowned SPI %u with no distributor", intid);
+        __atomic_fetch_add(&armcpu_spi_unhandled, 1, __ATOMIC_RELAXED);
+        armcpu_spi_unhandled_id = intid;
+        write32(dist,0x180+word,bit);
+        __asm__ volatile("dsb sy":::"memory");
+        IOLog("ArmCpu: unowned SPI %u masked (total %llu)\n",
+            intid, (unsigned long long)armcpu_spi_unhandled);
+        __asm__ volatile("msr icc_eoir1_el1, %0\n\tisb"::"r"(id):"memory");
+        continue;
+      }
       write32(dist,0x180+word,bit);
       __asm__ volatile("dsb sy":::"memory");
       __atomic_fetch_add(&owner->count,1,__ATOMIC_RELAXED);
@@ -468,11 +567,10 @@ void ArmCpu::interrupt(void)
       __asm__ volatile("dsb sy":::"memory");
       continue;
     } else {
-      panic("ArmCpu: unexpected PPI %u", intid);
+      panic("ArmCpu: unexpected architectural IRQ %u", intid);
     }
     __asm__ volatile("msr icc_eoir1_el1, %0\n\tisb" :: "r"(id) : "memory");
   }
-  panic("ArmCpu: IRQ drain did not quiesce");
 }
 
 extern "C" IOReturn armcpu_spi_attach(uint32_t intid,bool edge,void (*handler)(void *),void *context,
@@ -517,7 +615,10 @@ extern "C" IOReturn armcpu_spi_attach(uint32_t intid,bool edge,void (*handler)(v
 void ArmCpu::signalCPU(IOCPU *target)
 {
   ArmCpu *cpu = OSDynamicCast(ArmCpu, target);
-  if (!cpu) panic("ArmCpu: invalid CPU signal target");
+  // Upstream also rejects an affinity whose target-list bit falls outside
+  // the 16-bit SGIR field: 1 << (aff0) would land in the aff1/INTID bits.
+  if (!cpu || (cpu->affinity & 0xff) >= 16)
+    panic("ArmCpu: unsupported CPU signal target");
   uint64_t aff = cpu->affinity;
   uint64_t sgi = ((aff & 0xff00000000ULL) << 16) | ((aff & 0xff0000ULL) << 16) |
                  ((aff & 0xff00ULL) << 8) | (1ULL << (aff & 0xff));
