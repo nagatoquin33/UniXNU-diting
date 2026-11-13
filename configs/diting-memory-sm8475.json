@@ -1,7 +1,7 @@
 {
   "format": "diting-sm8475-dram-v1",
   "physical_bytes": 12884901888,
-  "source": "Diting REC /sys/firmware/fdt, capture services57a",
+  "source": "Diting REC /sys/firmware/fdt, capture services57a; allocatable carved against dts/diting.dts reserved-memory + REC reserved 2026-11-13",
   "dram": [
     {
       "base": "0x80000000",
@@ -228,12 +228,16 @@
       "size": "0xe4000"
     },
     {
-      "base": "0xa0400000",
-      "size": "0x6a00000"
+      "base": "0xa2e00000",
+      "size": "0x3d80000"
     },
     {
       "base": "0xa6e40000",
-      "size": "0x7c5000"
+      "size": "0xc0000"
+    },
+    {
+      "base": "0xa7400000",
+      "size": "0x205000"
     },
     {
       "base": "0xa760d000",
@@ -241,11 +245,11 @@
     },
     {
       "base": "0xbab00000",
-      "size": "0x25b00000"
+      "size": "0x25500000"
     },
     {
-      "base": "0xe0a00000",
-      "size": "0x4bf3000"
+      "base": "0xe0b00000",
+      "size": "0x4af3000"
     },
     {
       "base": "0xe5700000",
