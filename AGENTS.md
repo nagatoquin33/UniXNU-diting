@@ -1065,3 +1065,14 @@ work is the boot itself, not the inputs.
 - C3 镜像已备：`build-work/b1-darwinboot24/diting-unixnu-uefi-c3-cpus8.img` sha256 `e2d298a903606d4f977159dfac85d4f56857fe1dda403bcb41cbc03c366b3af8`（C1 `285e6afa` 仅 `cpus=1`→`cpus=8`，其余 39 token 不变）；`check-loader-adt-contract.py` PASS。设备在场时 `fastboot boot` 即可定多核协因子。
 - `diting_disable_swap=1` 复核：patch 实现保内存压缩器、置 `swap_is_present/active/freezer_swap_is_active=FALSE`，与 CONFIG_FREEZE_SUSPENDED_MIN 阈值常量不冲突——配置自洽。
 - 待办更新：Sheng `native_ufs_store_*` 持久化导出移植中（RamBlock PersistOverlay 弱引用目前全空、盘内状态易失）；ArmCpu/ArmDTPlatform/DitingPower/Wi-Fi 构建修复在途。
+
+## 2026-11-13e — 批3 驱动/脚本修复全落地（A 方向：iPadOS 18.7.10 坚守）
+
+策略已定：守 iPadOS 18.7.10（Pong 上游已转 iOS 18.6.2/22G100 native arm64e 赛道，userland 重写件留作移植参照）。批3 五路并行子代理交付：
+
+- 8eb77f7 驱动：ArmDTPlatform 上游更新版回移（时钟/RTC/阶段诊断，+135/-5）、USB 启动与音频注册解耦、TFA9873 退役换 CS35L41/WSA（audio serving 保持 0，查询安全返回未就绪）、NativeUfs 新增 DitingStore.h 持久化 store（native_ufs_store_* 6 个 extern "C" 导出供 NativeRamBlock 弱引用；宿主机 fixture 六场景验证过，内核编译未验）。不伪造通道。
+- 176bf22 脚本：Wi-Fi DTB 解析顺序 DITING_LIVE_DTB > DITING_HARDWARE_DTB > 编译回退（内核 recipe 会覆写 HARDWARE_DTB，LIVE 优先是刻意）；prelinker 统一到上游 kits/XnuPrelink（diting_paths.py:176-211 新增 unixnu_checkout/xnu_prelink，二进制 tomllib.load 修 Windows GBK）；5 个死脚本标 DEPRECATED。
+- dab3157 Wi-Fi 收尾：选中 DTB 缺 12 个 live-tree Wi-Fi 属性时点名失败，不再静默发陈旧 baked 值。
+- 40786fc ArmCpu 上游防御回移：unowned SPI 计数+ICENABLER 屏蔽（不再 panic）、排水>1M 仅在 armcpu-diagnostics=1 时 panic（计数无条件）、armcpu_smp_fail[8] 逐核失败码（1 MPIDR / 2 redist / 6 PSCI 拒绝）、CPU_ON 应答核 MPIDR 校验、signalCPU aff0<16 边界。
+- 上游对比结论：diting 驱动层不落后 pong-* 拆分仓——UFS 三处修复（reportMediaState 解绑/lease 硬依赖/有界 stall）上游尚无；usb-sm8475.json 命名替换后逐字节相同；power 配置含上游全部新字段。真正差距在 userland 两代重写（BSD 许可、版本锁 22G100）——留作后期移植参照。
+- C3 镜像已备：build-work/b1-darwinboot24/diting-unixnu-uefi-c3-cpus8.img sha256 e2d298a9（C1 基线仅 cpus=1->8），loader/ADT 合约 PASS。设备在场后 fastboot boot 定多核协因子；若 SMP 坐实死症再评 iOS 跳转。
