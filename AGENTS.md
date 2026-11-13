@@ -1030,3 +1030,12 @@ work is the boot itself, not the inputs.
 - `configs/diting-memory-sm8475.json`：allocatable 与本仓 `dts/diting.dts` reserved-memory 曾有 6 段自相矛盾的重叠（adsp region23 `0xa0400000-0xa2e00000` 42MB、region24 2.5MB、region26 1MB、ramoops `0xa7000000-0xa7400000` 4MB、region27 `0xe0000000-0xe0600000` 6MB、region29 1MB）。已按**本仓 dts reserved ∪ REC reserved 双集**切割，14→15 bank、边界对齐保留区、剩余重叠 0。注：这些 bank 全 <4GiB，而 `ClaimDitingRam` 每次认领 `MAX(base,desc,0x100000000)` 钳到 ≥4GiB——重叠是死配置不生效，修正属契约一致性/防回归；≥4GiB 三 bank 不受此切割影响。
 - `patches/xnu-ipados18/series` 重建为真实应用序（5×0000 + 0001 + 0002 + 0003 + 7×zz*）。`0000-*` 与 `patches/xnu/` 同名文件逐字节相同，是 macOS 布局必需品（`build-ipados18-diting-macos.py` 将 xnu-ipados18 链接为 xnu），已纳入 git 跟踪。
 - UniXNU-diting 检出（HEAD `6400a07`，落后 diting-ci 6 天）含 26 文件旧版未提交改动 + 独有 `diting_ipados18_validation_defconfig`、`platform-firmware/basecore-advanlogger.patch`——旧迭代残留，非当前线。
+
+# 2026-11-13c — 文档重读后的事实更正（路线图/交接/执行计划三文档）
+
+- **桌面已到过**：C1 bring-up 镜像 `285e6afa…`（cpus=1、POWER/BACKLIGHT、最小驱动）2026-11-12 真机进 iOS 主屏（G4 门槛已过）；C4 再进主屏但触摸未归因。"进不了桌面"的说法作废——进不去的是"全开"镜像。
+- **UFS 单独无罪**：bring-up defconfig 里 NativeUfs=y，C1 带 UFS 在 cpus=1 上工作了全程（launchd 时代到 C1 桌面两次实证）。ufs0（cpus=8+无 UFS）mountroot 是**预期**（无根介质），不是"修复证据"；e2dbg 损坏 panic 的必要条件是 UFS transport，但充分条件疑似 **UFS × {cpus=8, 全开驱动, release-vs-bringup 差量}**。按执行计划 §5，正确单变量下一跳是 **C3 = C1 基线 + cpus=8**——多核是不是协因子一boot便知；e2dbg-ufs2（寄存器 vs 传输）仍有效但优先级降到 C3 之后。
+- **userdata 全链可本地**（纠正"还需 macOS"）：OS 窗口内容一次制备需 macOS/CI（`prepare-diting-userland-from-ipsw.py` hdiutil；产物 `diting-ipados18-system.cdr` `27c507c8…` 已在 `D:i\ditingrtifacts\ci-42987806310\`），其余全部 Linux：`make-data-window.py`（sgdisk + `~/apfsprogs/mkapfs/mkapfs`，本机已装）、`make-userdata-image.py`/`build-diting-userdata-image.py`（SHNGROOT 纯 Python）、`make-sparse-image.py`/`flash-userdata-image.py`（Android sparse 刷写）。11-09 的 19GB userdata-root.img 即本地产物。
+- **执行计划 §5 分轮表（每轮一变量，设备在场时按此走）**：C1 bring-up 基线（已过 G4/G5 桌面）→ C2 +diting_usb → C3 +cpus=8 → C4 触摸（已跑，未归因）→ C5 +wifi → C6 +adreno → C7 +metal → C8 音频。e2dbg 式全开镜像与该计划矛盾，AGENTS.md:961 已自记"不是单变量"。
+- **硬件事实**（C0/TWRP）：触摸 = Goodix Berlin-D GT9916（firmware `goodix_firmware_l12`，1220x2712，IRQ363，GPIO reset20/irq21/avdd71，SPI 0x990000）；功放未定（live DT 双 cs35l41 enabled、wsa883x disabled，Pong TFA9873 不存在）；ramoops@a7000000 在 dts reserved 内。
+- **回退资产清单**（阶段0，不得删）：`diting-boot-launchd-unsecure.img` `cb56ac9d…`、`greenI2-log-menu.img`、`prepared-420734-os.img`、`windows/Data.img`（337CF716）、`ipados18-source/{OS,SystemOS,AppOS}.dmg`、`diting-recovery-boot.img`。
