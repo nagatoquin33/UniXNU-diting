@@ -6,23 +6,43 @@ Format 2 device support for the Redmi K50 Ultra (`diting`), Qualcomm **SM8475**.
 
 - [UniXNU tools](https://github.com/UniXNU/UniXNU); UEFI package in-tree at `platform-firmware/ditingPkg` ([uefi-pong](https://github.com/Chengdong-Yu/uefi-pong) is the external SM8475 reference)
 - Official [migration](https://unixnu.com/en/porting/migration) and [device repository](https://unixnu.com/en/porting/device-repository) guides
-- [Format 2 integration](migration/format2/README.zh.md), [OS migration](migration/ipados18/README.zh.md), [porting record](porting.toml)
+- [Format 2 integration](migration/format2/README.zh.md), [OS migration](migration/ipados18/README.zh.md), [porting record](porting.toml),
+  [status](docs/STATUS.md), [provenance](docs/PROVENANCE.md)
 
-## Hardware and progress
+## Status (2026-11-15)
 
-| Area | Configuration and observations |
+**Observed on Diting hardware** (each item traced in [`AGENTS.md`](AGENTS.md) and
+[`docs/STATUS.md`](docs/STATUS.md)):
+
+| Area | Device result |
 | --- | --- |
-| CPU / memory | X2 + 3×A710 + 4×A510 (4+3+1), PSCI/GICv3, 19.2 MHz timer, native 4 KiB pages; 12 GiB physical RAM, managed memory constrained by reservations |
-| Display / input | 1220×2712, Goodix Berlin-D GT9916 touch (SPI 0x990000); the C1 minimal image reached the iOS home screen on device (2026-11-12, user-observed); touch is not yet responsive — attribution pending |
-| GPU / Metal | Adreno 730 community implementation (`DitingAdreno`/`DitingMetal`, Turnip/metal2vulkan patch sets); opt-in via `diting_adreno_start`/`diting_metal`; not device-verified on diting |
-| Storage | NativeUfs, ShengUfs-derived SM8475 port (ufshc 0x01d84000, apps_smmu 0x15000000 stream 0xe0); SHNGROOT v1 OS/SystemOS/Data windows published and launchd reached on Pong lineage; the diting C1 image also ran to the home screen with UFS enabled on `cpus=1`. A deterministic memory-corruption panic on the full-open image is under investigation — see AGENTS.md |
-| Wi-Fi | QCA6490/ath11k over PCIe0+MHI; compiles to `libDitingAth11k.a`; firmware kept local, never committed; not device-verified |
-| Audio | ADSP PAS1; live DT has dual CS35L41 amps on `i2c@880000` (wsa883x disabled, TFA9873 absent); CS35L41 bring-up is planned (porting area `diting-cs35l41-audio`) |
-| Buttons / power | PMIC events via DitingPower; power/backlight ran during the C1 desktop boot; buttons and suspend/resume pending verification |
+| CPU / memory | X2 + 3x A710 + 4x A510 (4+3+1), PSCI/GICv3, 19.2 MHz timer, native 4 KiB pages, 12 GiB RAM. CPU0-7 all report `first boot completed` on addon16-full / addon17. |
+| Desktop | addon16 (`cpus=1`, Wi-Fi off) reaches the iPadOS desktop and keeps running; addon16-full / addon17 (`cpus=8`) also reach the desktop. |
+| Metal / GPU | addon16-full: Vulkan-backed device, 3 actual `GPU scanout copy completed status=0`, 10240 submits / 10239 completed; addon17: 9216 / 9215. Per-app compatibility and frame rate are not validated. |
+| Touch | Goodix GT9916 (Berlin-D, SPI `0x990000`) powers up, handshakes and produces digitizer events; **works but is very laggy** (2026-11-14). THP host-side touch processing is still being tuned. |
+| Plugins / persistence | Six GPU addon files are synced, renamed and mounted after Data sync; a Recovery readback after reboot reports `written=0 same=6 failed=0` and Extensions stage/status 5/0. |
+| launchd | The PID 1 `exec /sbin/launchd` EFAULT is fixed by separate scratch pages; not reproduced since addon16. |
+| Storage | NativeUfs with the SHNGROOT v1 OS/SystemOS/Data windows; launchd and userspace run from them on Diting, and addon16+ reach the desktop. |
 
-Host builds and service publication are recorded separately from device functionality. Historical source and device observations remain in the migration records.
+**Current blockers** (located in device logs, not inferred):
 
-Device-verified on diting so far: the UEFI menu, DarwinBoot24 handoff, launchd, and the C1 home screen. Everything else is host-build evidence or Pong lineage records — `porting.toml` carries per-area `provenance` and `evidence.reported_kind`. See [runtime integration and preserved packaging scripts](migration/ipados18/runtime-fixes-and-build-overlay.md).
+- **Wi-Fi**: addon16-full / addon17 time out on the first smpe2 high-word write (`0x40508=7`) before PCIe
+  training, with an RPMh response timeout and no scan. The live DT's active TCS set is TCS0-2 and TCS4 is the
+  sleep slot; addon18 switches the shared requests to TCS1 and is built but not booted yet.
+- **Battery / ADSP**: after addon17 writes the signed stock ADSP, ADSP reaches stage 6 and stage 7 times out
+  on the shared RPMh `0x30030=7` (-60); PAS loading and battery-service publication are not reached.
+- The device currently sits in temporary Recovery. The next image is
+  `D:\ai\diting\build-work\diting-addon18.img`; the verified fallback is `diting-addon16-full.img`.
+
+**Not achieved — do not claim usable**: Wi-Fi scan/association/DHCP, battery and charging state, per-app Metal
+compatibility and performance, audio (the live DT has dual CS35L41, not integrated), suspend/resume.
+
+Host build results and device functionality are recorded separately. Several `porting.toml` and
+`migration/ipados18/` records are inherited from Pong (Nothing Phone 2, same SM8475) hardware history - for
+example the audible TFA9873 audio/ringtone and some Wi-Fi/storage conclusions. They are implementation
+references, **not Diting evidence**. Diting-only conclusions live in [`AGENTS.md`](AGENTS.md) and
+[`docs/STATUS.md`](docs/STATUS.md); the source split is documented in
+[`docs/PROVENANCE.md`](docs/PROVENANCE.md).
 
 ## Driver repositories
 

@@ -1079,3 +1079,179 @@ work is the boot itself, not the inputs.
 
 - 2026-11-13f 批3 本地编译验证完成：按 AGENTS.md:915 全量环境（xnu-linux-toolchain env.sh + HOST_* + LD_LIBRARY_PATH）跑 `./unixnu build kernel -D ../diting-ci`，exit 0。产出 kernel.macho sha256 1faac405952643adda78308a879b8cf6df79dfb3a2561717bb1a655705f63b4f；check-storage-bindings PASS（9 绑定落映射段）。符号验证：_native_ufs_store_* 8 导出、_armcpu_smp_fail/_armcpu_spi_unhandled/_armcpu_spi_unhandled_id 均链入 mach.development.diting——DitingStore.h 与 ArmCpu 回移在真实工具链下编译+链接通过。踩坑记录：(1) .cache/xnu-work 陈旧补丁态（goodix 后加的 0001 导致部分应用、双向校验皆败）——解法 rm -rf device-tree/.cache/xnu-work 重建；(2) xcrun shim 把 bison/flex/gm4 解析到 /usr/sbin/（本机无此路径）——需显式 export HOST_BISON=/usr/bin/bison HOST_FLEX=/usr/bin/flex HOST_GM4=/usr/bin/m4，AGENTS.md:915 的 BISON 变量名对 MakeInc.cmd 无效（它读 HOST_BISON）。
 - 后续提交 40786fc+dab3157+40786fc 后 ArmCpu 收尾两增量（smp_fail=4 注册码、stage5 非覆写守卫）已提交（见 git log）。批3 全部落地：文档/配置/UFS/ArmCpu/ArmDTPlatform/音频/USB/Wi-Fi/脚本/store 十面修复，工作树干净。
+
+# Diting 触控突破与 panic 修复（2026-11-13/14）
+
+## 真机已验证
+
+- iPadOS 18.7.10/22H374 进桌面稳定运行（一次 ≥7 分钟），SpringBoard/backboardd 正常。
+- Goodix GT9916 Berlin-D 通电+SPI+固件握手：RPMh 必须投 TCS0 活动槽（ldob12≈1.8V + GPIO71 AVDD 3.2V）；芯片自报 "BERLIN"/"9916" 00.80.02.51。
+- 面板配置已在芯片内（config_id 0x631b5025），不需要上传；上传协议仍实现（0x0A/0x0B/0x0C + {csum,0x3e000,len,cfg} 写 fw_buffer_addr）供差异时调用。
+- 厂商 DTS 权威报告空间 goodix,panel-max-x/y = 12200x27120；ADT max-x/max-y 已按此改。
+- 内核→用户态：/dev/diting-touch 队列，backboardd 内 touch.c（Pong/redwood MIT）注入 display-integrated digitizer 事件，服务被事件服务器打开，TouchDetectionMode 正常流转。
+- 触控能用但异常卡顿（2026-11-14，待调优）。
+
+## THP 主机触点处理（本代关键）
+
+- K70 经验包证实 GT9916 坐标计算留给主机 THP 栈：命令 0x90/0x82 请求 firmware-baselined 差分帧；0x90/0 回坐标模式。
+- IC-info（0x10070）misc 块偏移：cmd_addr +0、fw_state +12、frame_data_addr +24、frame head/attr/log 长 +28/+30/+32（三者之和=frame_skip）、fw_buffer +18/max_len +22、touch_data +44、real axes +52/+54；tx=info[28]、rx=info[29]。
+- 帧就绪：frame_data_addr 首字节 bit7；矩阵 = tx-major int16 LE，位于 frame_skip+8 起。
+- 主机处理：top-5 |v|≥thr(默认200) 峰值 → 3x3 加权质心（半节点单位）→ 长轴=y（t_is_y=(T>=R)^map0）→ 按 max_x/max_y 缩放 → 300px@1440 比例半径最近槽跟踪 → DOWN/MOVE/UP。
+- 新 boot args：diting-touch-thr（阈值）、diting-touch-map（bit0 长轴交换 bit1 x镜像 bit2 y镜像）、已有 touch_flip（归一后镜像）。
+- 卡顿排查方向：轮询节奏（touch_wait 2-8ms）、帧实际到达率、THP 与坐标轮询并存占 SPI 带宽、map 轴序是否正确。日志行 'goodix: THP mode %u; matrix %ux%u frame %#x skip %u' 给出芯片实际矩阵尺寸。
+
+## Panic 修复（三项，均为流水线错误非触控代码）
+
+1. CPU config panic @AppleARMCPU:111 —— 重新生成的 ADT 内存拓扑错误；**禁止重生成 ADT，只能二进制补丁已验证 ADT**（patched.adt 注入 goodix,cfg-data + max-x/y 成功）。
+2. AppleARMCPU 争用 cpu 节点 panic —— kernel.macho 里 IONameMatch cpu→xpu 等长重写（stage-kernel.py）。
+3. far=0x28 sha1_init panic（generatePlatformUUID 调空指针）—— **kits/XnuPrelink/emit_prelink.py 把 __PRELINK_INFO 放在原生内核顶 0x8178000（组件区之下），ml_static_slide 清零全部预链接组件**；改用 kits/NativePrelink/emit_prelink.py emit()（info_va 含 new_segments → 0xdbb0000 在组件之上）+ 空 library 集 + diting_rootful_policy。脚本：build-work/native-prelink.py + stage-kernel.py。
+
+## 证据通道（已打通，不再要照片）
+
+- XNU ramoops 镜像写 userdata 尾部 4MiB；板级 LBA 兜底（不要求 SHNGROOT manifest）。
+- userdata=/dev/block/sda37，4K 扇区；GPT 盘内 LBA 0x2F8A00-0x3ADF3FA；**dd skip 用分区内偏移**：最后 4MiB skip=58615291 bs=4096 count=1024。
+- TWRP/stock-recovery adb root（uid=0）可拉取；MSYS 下远程路径写 //tmp/。
+- slot A 刷 HyperOS 3.0.3.0（boot/vendor_boot/dtbo/vbmeta 全套同源），已救活 unbootable 槽；slot B=UniXNU。
+
+## 构建/产物
+
+- 内核构建：build-work/goodix-xref/rebuild.sh（env 全齐）；**xnu-work 已 git checkout+clean 复位，diting_goodix.c 由补丁创建属未跟踪文件——改动一律走 patches/xnu-ipados18/zz*.patch + series，禁手改**。
+- 最新镜像：diting-unixnu-uefi-thp.img sha256 88b8a3833cac36b8（内核 4ac460a94fdd4033），临时 fastboot boot 方式验证。
+- 补丁链：…→touch-config→touch-reportspace→**touch-thp**（16 个 z）。
+
+## 未完成（不得声称可用）
+
+- Wi-Fi：libDitingAth11k.a 仅编译；固件 amss/amss20/m3/regdb 未打包进镜像；CI 读错 DTB 路径已知。
+- Metal/GPU：编译参数在，零硬件验证。
+- WSA 音频：未实现。
+- 多核：cpus=8 在 args，协因子未验证。
+- 触控剩余：卡顿调优 + 四类验收（静止不滚动/按中图标/连续拖动/正确抬起）。
+
+# GPU addon 安装 panic 调查（2026-11-15）
+
+## 状态
+
+- 采用上游 Pong 式 addon 架构：DarwinBoot24 读 `<kernel>.gpuaddon`（NGPUADD2 信封）→ 拷进内核窗口 → 写 `/chosen/memory-map/GpuAddon` ADT 项 → XNU 经 `native_ram_block_gpu_addon` 弱引用访问器读取 → `native_owner_data_prepare` 在 launchd exec 前把文件写入 Data 卷 `/private/var/ngpu/` → union mount 覆盖 Extensions/LaunchDaemons。
+- 实机复现路径：文件 0-2 完整写入成功（含 25MB dylib 全流程 rdwr→setattr→fsync→close）；文件 3（libvulkan_freedreno.dylib 17.9MB）在 close/writeback 阶段必崩 `Entered recursive exception`。
+- addon payload 全段可读性已验证（head=NGPUADD2 magic、tail 正常），访问器/解析/前三个文件安装链路无问题。
+
+## 崩点定性（裸写 ramoops 探针实证）
+
+- 探针：sleh sync/serror/invalid-stack 三入口无锁无 printf 裸写 16 字记录到 ramoops zone0 尾部（0x1f0000/0x1f0800/0x1f1000，每条 128B：tag/esr/far/pc/sp/lr/fp/x0-x3），随 console zone 被 UFS 镜像冲出。printf 探针在禁中断/嵌套上下文拿不到数据，裸写可以。
+- addon12 捕获 10 条记录：tag=0x125（EL1 同步异常 class 0x25 Data Abort）、ESR=0x9600004f（**写权限 fault, level 3**）、FAR=0xfffffffa88758000 起按页步进至 0xfffffffa8875c000、同序列出现两遍、PC 交替 0xfffffff00908a6fc/0xfffffff00908a724、同 SP。
+- PC 符号化：两个 PC 均落在 `_bzero`（0xfffffff00908a6e0）内部——`stp x1,x1,[x0]` 边界写 + `dc zva,x3` 整块清缓存的标准页清零循环。
+- FAR 位于 physmap（DATA map 止于 0xfffffffa87ca2000、ipc_kernel_copy_map 止于 0xfffffffa884a2000 之后）。**页分配器把 physmap 只读映射的物理页发给 VM/APFS 写回，pagezero 逐页 fault**。
+- 高置信度嫌疑：UEFI 内存表 PIL Reserved（0x85200000 起 ~477MB）等保留洞既进了空闲页链表、physmap 又不给写权限 → 空闲链表与 physmap 权限不一致。待 addon13 的 x0/x1/lr 记录（bzero 目标地址/长度/调用者）确认具体区域与调用方。
+- 已排除：Wi-Fi 并发（diting_wifi=0 同点崩）、ramoops-UFS 镜像竞态（=0 同点崩）、diting_ufs_stall 持锁睡眠（=0 同点崩且无 TRANSPORT 报告）、fsync 本身（跳过 fsync 后崩在 close）、payload 映射。
+
+## 工程教训/规则
+
+- **补丁树幂等**：zz* 补丁若含"context 依赖前序补丁"的 hunk，`git apply --reverse --check` 零容差反不掉 → 0001 反装检测失败 → 构建卡死循环。reportspace 补丁 context 已改为含 config 插入行的真实布局；任何动 0001 创建文件的补丁必须保证 git 正反检测都能过。残留混态时用 GNU patch --fuzz 按 LIFO 反装恢复。
+- `wsl -- bash -c 'A; B'` 的单引号在 Windows 命令行被吞，只有 A 进 -c、B 在外层 MSYS 跑——**跨 WSL 执行一律写脚本文件再 `wsl -- bash /path.sh`**；write 工具写 UNC 路径会落 CRLF，跑前 `tr -d '\r'`。
+- `nohup ... &` 或 `bash -c '... &'` 的后台进程在 wsl 命令退出时整树被杀，后台构建必须前台跑（长 timeout）或 script 文件。
+- `diting_ramoops_mapped_base ? f() : 0` 对导出普通函数恒为真（-Wpointer-bool-conversion 警告）；符号存在时无害，但写法待清理。
+- unstripped 内核（mach.development.diting.unstripped）有完整 6.4 万符号表——`llvm-nm` 可直接符号化 PC；`physmap_base`/`physmap_end` 是 SECURITY_READ_ONLY_LATE 运行期赋值，镜像里为 0，physmap_base = phystokv(args->topOfKernelData)+slide。
+
+## 下一步
+
+1. 拉 addon13 ramoops → x0/x1（bzero 目标/长度）+ lr（调用者）定调用链：pagezero / APFS bounce / kalloc / 其他。
+2. 若坐实保留洞进空闲链表：修设备内存声明（DTS/UEFI 内存表→ADT 传递），使空闲页链表与 physmap 权限一致。
+3. 修通后恢复 fsync（当前为跳过的诊断态，非最终行为），再继续 Metal/加速路径。
+
+## 未完成（不得声称可用，同上节之外新增）
+
+- GPU addon：装机路径崩在文件 3 写回，未装完；bundle 未真正挂进系统。
+- Metal/GPU 加速：内核侧 CP/ZAP/fence 初始化通过，用户态加速仍未接通。
+- 持久 ramoops 异常记录探针属诊断设施，后续决定是否保留为开发开关。
+
+
+## 2026-11-15 — addon13 实机回读
+
+- 临时启动已验证的 Recovery，从 userdata 尾部只读回收 4 MiB，保存为 D:\ai\diting\build-work\ramoops-addon13.bin。确认 12 条记录通过 addon13 格式的 PC 反码与尾标校验。设备已回 bootloader fastboot，未刷写分区。
+- LR 0xfffffff008e9fb98 对应 OSKext::updateLoadedKextSummaries() 内 0xfffffff008e9fb94 的 bl _bzero。首条记录停在 _bzero 的第一条 stp，x0=0xfffffffa05f37000、x2=0x5000（入口 x1 已转存到 x2，现场 x1=0）。ESR=0x9600004f，FAR 覆盖 0xfffffffa05f37000 至 0xfffffffa05f3b000 的五个页首。
+- 更正上节判断：这组 fault 发生在 kernel_map 的 kext 摘要缓冲区清零路径。源码的 kmem_alloc(KMA_DATA) 新分配分支与对已有缓冲区 mach_vm_protect(..., VM_PROT_DEFAULT) 的复用分支汇合到同一条 bl，LR 单独无法判定分支。文件 3 的 close 尚未返回是日志时序，原先的 physmap/PIL Reserved 与 APFS 页清零推断缺少页表及调用栈证据。
+- 下一轮先区分新分配与复用，记录缓冲区的 VM map 保护值、L3 PTE、上层调用帧和内核写权限故障的处理结果。vm_map_protect 对普通映射增加写权限时会先更新 map，留给后续写故障补 PTE；因此复用分支出现首个写 fault 可以符合预期，需要查后续恢复路径。此次只取证和维护记录，内核与设备内存声明未改。
+
+
+## 2026-11-15 — addon14 摘要缓冲区修复
+
+- 新增 Diting 专用补丁 zzzzzzzzzzzzzzzzzzz-diting-kext-summary-mapping.patch。每次在新分配的可写映射填好 kext 摘要，设置为只读后发布，再释放旧缓冲区。分配或权限设置失败时继续保留旧摘要。该修复针对复用只读缓冲区时依赖写权限 fault 恢复的路径。
+- 源码全量备份在 WSL /home/nagatoquin/unixnu/backups/diting-ci-addon13-before-fix-20261115。新增补丁 LF 正反检测通过，完整内核编译链接成功，九个存储绑定落在映射段。反汇编确认 Diting 的 bzero 前进入新分配路径，摘要在发布前仍设置为只读。
+- 以 D:\ai\diting\build-work\diting-addon13.img 为模板换内核，保留同一份启动参数、固件和 GPU addon。D:\ai\diting\build-work\diting-addon14.img 已获 Fastboot 临时启动 OKAY，未刷写。设备画面与运行时结果待确认。
+
+
+## 2026-11-15 — addon14 实机结果
+
+- 33 确认 addon14 仍到 panic 屏。临时 Recovery 回读 userdata 尾部到 D:\ai\diting\build-work\ramoops-addon14.bin，设备已回 bootloader fastboot。
+- UFS 镜像中的有效 console 尾部仍在文件 3 的 rdwr、setattr 成功之后、vnode_close 返回之前。有效裸记录只有两条：skmem_sysctl_init 的 0x96000046 L2 翻译故障，以及 copyout 首字节写 0x1100 的 0x96000045 L1 翻译故障（寄存器与早期 copyout("apfs", scratch + 0x100, 5) 相符）。这两条均发生在系统继续启动到 addon 之前。镜像中没有最终 panic 现场，不能判断它是否仍在摘要清零。
+- addon14 的摘要缓冲区改动还没有通过实机验收。需要 panic 屏最初报错和调用栈，或能跨重启保留最后一次异常的日志，再决定修复范围。
+- 另用同一份 addon14 只将 cpus=8 改为 cpus=1。D:\ai\diting\build-work\diting-addon14-cpus1.img 临时启动已交接；观察至少 44 秒，电脑未再看到 fastboot 或 ADB，屏幕状态和单核日志待查。
+
+
+## 2026-11-15 — addon14 单核对照
+
+- 33 将机器切回 fastboot 后，只读回收 D:\ai\diting\build-work\ramoops-addon14-cpus1.bin。单核跑过文件 3 的 close，六文件全部写完（written=6 failed=0），Extensions mount/visible/owner 均返回 0，继续到尝试加载 /sbin/launchd。Daemons 与 wallpaper 日志为 1/2，不能记为挂载完成。
+- 除八核也出现的两次早期翻译故障外，第三条 0x96000046 来自 exec_save_path 调用 bzero 时写 0xfffffff0008fc000（长度 0x410）。它是 L2 翻译故障，是否正常按需映射待核对，不能直接称为致命 panic。
+- 同份日志明确显示 DitingWifi worker 启动并进入 PCIe coldLink。镜像同时带 diting_wifi=0 和末尾 diting_wifi=1，之前仅改第一个值的操作不能作为本轮 Wi-Fi 关闭证据。只将末尾值也设为 0 得到 D:\ai\diting\build-work\diting-addon14-cpus1-nowifi.img，已临时启动，待真机结果。
+
+
+## 2026-11-15 — launchd EFAULT 与安装持久化
+
+- 关 Wi-Fi 的单核回读确认六文件写完、Extensions 通过，系统进入尝试 exec /sbin/launchd。此时 Recovery 从 Data APFS checkpoint 10261 查不到六个文件，安装未跨重启持久化。
+- 33 的本地 panic 原图写明 PID 1 exec /sbin/launchd failed, errno 14。源码确认旧代码把 SystemOS 的 envp 表放在临时页 +0x500，Extensions bindfs 参数也在同处拷入 /private/var/ngpu/addons，首指针被路径字节覆盖。Data 的 mkdir 还占用 +0x400，会覆盖 DYLD_SHARED_CACHE_DIR。用 4 KiB 和 16 KiB 页的布局复现了覆盖和修复。
+- 新增 zzzzzzzzzzzzzzzzzzzz-diting-gpu-addon-durability.patch：分段同步写临时文件，同步并关闭后重命名，卷同步成功才挂载。宿主机复现通过短写、同步失败、关闭失败、重命名失败保留旧文件，以及成功写入后的同文件复用。另新增 zzzzzzzzzzzzzzzzzzzzz-diting-launchd-scratch.patch：Data 与 addon 使用单独的第二页，保留 SystemOS 和 launchd 的 argv/envp。
+- 第一次名为 addon15 的 Windows 镜像由于临时打包脚本取错来源，仍是 addon14 内核。其 panic 照片与回读均不能作为持久化补丁实机结果。更正后显式传入新镜像、对照镜像与本轮构建 kernel.macho，取出包中内核逐字节比对并确认新日志标记。
+- addon16 完整构建、补丁正反检查及预链接存储绑定检查通过，沿用单核、关闭 Wi-Fi 和原六件 GPU addon。Windows 产物 D:\ai\diting\build-work\diting-addon16.img 已 fastboot boot OKAY。待实机确认 launchd、插件持久化与 Metal 功能。
+
+
+## 2026-11-15 — addon16 实机进入桌面
+
+- 33 确认临时启动的 addon16 已进入 iPadOS 桌面。该镜像使用 cpus=1，Wi-Fi 关闭。这一组合已经越过上一轮 PID 1 exec 的 EFAULT，作为下一轮回归基线保留。当前把设备留在运行状态，Windows 侧未枚举出可用的 ADB 或 Apple USB 接口。
+- 确认桌面不能用来确认硬件合成、八核或 Wi-Fi。下一次计划重启时先由 Recovery 只读检查 Data 卷内六件 addon 的持久化，再用同一镜像核对启动日志中 written=0/same=6、Extensions 挂载、Metal 用户态提交和 fence 完成。
+- 当前代码全量备份位置为 /home/nagatoquin/unixnu/backups/diting-ci-before-launchd-scratch-20261115，已替换本任务较早的两份备份。
+
+
+## 2026-11-15 — addon16 八核功能版
+
+- D:\ai\diting\build-work\diting-addon16-full.img 基于已进桌面的 addon16，只把 cpus=1 改为 8、把两处 Wi-Fi 参数归并为唯一的 diting_wifi=1。内嵌内核和 GPU addon 逐字节一致，Metal、GPU scanout、diting_adsp=2 均保留。
+- 电池驱动已链接，实机日志应出现 DitingBattery: physical battery power source published。驱动依赖 ADSP 固件与 PMIC GLINK，归档系统镜像 ci-42987806310 的 OS UUID 匹配且检查点为 442，里面未找到 /diting/firmware/adsp.mbn。下一次进 Recovery 直接查设备卷和 addon16 的电源日志，再按实际结果处理固件。
+- 功能版尚未启动，电脑端暂未看到设备回 fastboot。当前已知桌面验证仍为单核、关 Wi-Fi 的 addon16。
+
+
+## 2026-11-15 — 八核版与电源固件
+
+- 回读单核 addon16：GPU addon 六文件同步成功，重启后 Recovery 在 Data checkpoint 10665 查到六个文件，大小和模式均匹配。内核日志显示 backboardd / SpringBoard 分配 Adreno VA、真实 Vulkan-backed 设备、GPU scanout copy completed status=0，运行中 8192 submits / 8191 completed。该证据属于单核版；33 报告八核版进桌面但 Wi-Fi、Metal、电量均未达成，尚待回读八核日志。
+- 单核版日志显示 ADSP stage=3 error=2，Recovery 的 OS 卷也没有 /diting/firmware/adsp.mbn。只读读取本机当前槽 modem_a 的 26 个原厂签名 ADSP 分段（未刷分区），合成本地镜像。使用本项目实际 QcomMdt.c 验证 24 个 load 段都落在本机 carveout，5404 字节 PAS 元数据与原厂 MDT 逐字节一致。
+- Diting 原厂 DT 以及平台表都明确 ADSP 保留区为 0x9fd00000 + 0x03100000。此前驱动的 0x85700000 + 0x02800000 属于 Nothing 参考并且小于本机固件需要。驱动已更正并改用 pmap_has_managed_page 检查全部非连续 RAM 段，允许把原厂签名固件通过 addon 写到固定 Data 路径，保留 PAS 验签。
+- D:\ai\diting\build-work\diting-addon17.img 已构建，最终 payload 的新内核、七文件 addon、原厂 ADSP 字节和八核 / Wi-Fi / Metal / ADSP 参数均已核对。未临时启动；等待八核 addon16 设备回 fastboot，读出 Wi-Fi、Metal、ADSP 状态后再继续。
+
+
+## 2026-11-15 — 八核实机回读与 RPMh 活动槽修复
+
+- D:\ai\diting\build-work\ramoops-addon16-full.bin 确认 CPU0–7 均报 first boot completed，六文件全部复用（written=0 same=6 failed=0），Extensions stage/status=5/0。八核实机有 3 次实际 GPU scanout copy completed status=0 和累计 10240 submits / 10239 completed。桌面渲染性能及更多 Metal 应用仍需具体测试。
+- Wi-Fi 在 smpe2 高位设置（RPMh 0x40508=7）报 timeout，未走到 PCIe 或扫描。原厂 DT qcom,tcs-config 的活动组先列、占 TCS0–2；TCS4 是休眠槽。对照 Linux rpmh-rsc 的按 DT 顺序编号逻辑，并结合已实机工作的 Goodix TCS0，Wi-Fi/ADSP 的共享请求改为 TCS1，统一调整寄存器和 IRQ 位，GPU 原有请求路径保留并检查新共享槽是否有冲突。
+- D:\ai\diting\build-work\diting-addon17.img 已 fastboot 临时启动，固件与电量结果尚待回读。D:\ai\diting\build-work\diting-addon18.img 已构建并确认包内含 TCS1 修复的新内核、七文件 addon 和八核功能参数，尚未临时启动。
+
+
+## 2026-11-15 — addon17 回读和最终交接
+
+- 33 确认 addon17 进桌面仍无电量。Recovery 回读 D:\ai\diting\build-work\ramoops-addon17.bin：第七件原厂 ADSP 固件写入且 Data sync=0，ADSP 走到 stage 6，stage 7 发 0x30030=7 后共享 RPMh 超时（-60）；Wi-Fi 0x40508=7 同样超时。Metal 实际 scanout 成功，累计 9215 次完成。
+- 33 要求停在交接。设备在 Recovery，addon18 未启动。完整实机状态和下一轮验收见 D:\ai\diting\交接-2026-11-15-addon18-八核-Metal-WiFi-电量.md。全量备份为 /home/nagatoquin/unixnu/backups/diting-ci-before-rpmh-slot-20261115。
+
+## 2026-11-15 — docs refresh（README_EN / STATUS / PROVENANCE）
+
+- README.md 已由 lead 按 addon18 现实重写；本次把同一组事实同步到 README_EN.md，并补齐仓库缺失的状态与来源文档。
+- README_EN.md：替换 “Hardware and progress” 表与两段状态文字为 addon18 现实 —— addon16/16-full/17 进桌面、
+  八核 CPU0–7 均 first boot completed、Metal 有 Vulkan-backed 设备与 scanout/submit 计数、触摸 Goodix GT9916
+  可用但卡顿、六文件插件持久化、launchd EFAULT 已修；阻塞写 Wi-Fi RPMh `0x40508=7`（TCS4 为休眠槽，addon18 改 TCS1
+  未上机）与 ADSP stage 7 `0x30030=7`（无 PAS/电量）；删除 “touch not responsive”“GPU/Wi-Fi not device-verified”
+  “deterministic memory-corruption panic under investigation” 等过时表述。
+- 新增 docs/STATUS.md（中文）：当前设备/镜像、已实机证实项、ramoops 证据路径、阻塞表、addon18 验收阶梯
+  （Wi-Fi：RPMh committed→电源→PCIe→SMMU/MSI→MHI/QMI→station→扫描→关联→DHCP；ADSP：stage7→PAS→GLINK→
+  battery publish；Metal 回归）与维护规则。
+- 新增 docs/PROVENANCE.md（中文）：三层来源（上游/Pong 继承/Diting 实机）、Pong 记录清单（TFA9873 音频/铃声、
+  部分 Wi-Fi/存储结论）、`porting.toml` 的 `kind`/`reported_kind` 解读规则，以及“新结论先写 AGENTS/STATUS”。
+- 归档 docs-eacces-brief.md（2026-11-10 快照）到 docs/archive/2026-11-10-eacces-brief.md，加归档横幅；
+  docs/USB-LOGGING-PLAN.zh.md 保留。
+- 本次只改文档（README.md 为 lead 已改内容、README_EN.md、docs/STATUS.md、docs/PROVENANCE.md、
+  docs/archive/2026-11-10-eacces-brief.md、AGENTS.md）；未改代码/构建，未上机，未 push/CI。

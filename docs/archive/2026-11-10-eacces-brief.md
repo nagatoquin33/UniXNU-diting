@@ -1,3 +1,6 @@
+> 归档：2026-11-10 的 EACCES 问题快照，已过时。当前状态见 [`docs/STATUS.md`](../STATUS.md)，
+> 来源边界见 [`docs/PROVENANCE.md`](../PROVENANCE.md)。
+
 # iPadOS 18 移植：EACCES 问题同步摘要（2026-11-10）
 
 ## 1. 目标与栈
