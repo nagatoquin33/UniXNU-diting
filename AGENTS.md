@@ -1255,3 +1255,51 @@ work is the boot itself, not the inputs.
   docs/USB-LOGGING-PLAN.zh.md 保留。
 - 本次只改文档（README.md 为 lead 已改内容、README_EN.md、docs/STATUS.md、docs/PROVENANCE.md、
   docs/archive/2026-11-10-eacces-brief.md、AGENTS.md）；未改代码/构建，未上机，未 push/CI。
+
+## 2026-11-15 evening — OS 布局导致触摸 UI 失效、更新页崩溃与 GPU 帧率限制
+
+- **触摸根因 = OS 布局，不是驱动**：11-11 userdata 重刷装的是 Pong 时代 OS —— 设备只读回读 `/pong/init`
+  sha256 `a80747bbcaf076861c29669b8b49ece28215e3a0861e86d2a67d76e3b2b7bfb8`（71,392 B，与 `/sbin/launchd` 相同）、
+  `/sbin/launchd.ios` `81cefc45…`（560,752 B）、`/pong/libpong-ui18.dylib` 174,960 B sha256
+  `28d133d00c870a6baec0578d03961b2f968b34a2fd2b36b6790141294aeba37c`，`/diting` 不存在；该库的 9 类触控入口全部打印
+  `Pong touch HID: unavailable IOHID…; SKIP`。内核侧触摸正常：`D:\ai\diting\build-work\ramoops-addon18c.bin` 有
+  `Diting touch: DT ok`、`BERLIN`/`9916`、GENI-DMA 6.4 MHz、`IRQ240` GPIO21、`finger 0 at 5084, 23812` ×4，
+  没有任何 touch failure —— 但 Pong UI 库没有 `/dev/diting-touch` 直连路径，UI 永远收不到这些事件。
+  离线兼容候选：`artifacts/ci-42987806310/diting-ipados18-system.cdr`（6,845,104,128 B sha256
+  `27c507c8972275c9170806bb975b03d762ebbb9379945b890d5665a154e8102d`，卷 UUID B07DF049…、`/diting` 布局、
+  `/sbin/launchd`=`/diting/init` sha `95cb7341…`、`libditing-ui18.dylib` 174,976 B 含 `/dev/diting-touch` 与
+  `display-integrated digitizer opened`、`/pong` 缺失）；11-09 干净原件在
+  `diting-ci/out/userdata/userdata-root.img`（19,411,238,912 B）。写 OS 窗口属 6.8 GB 级分区写入，必须用户对那一次明确授权。
+- **“软件更新已完成”页 = softwareupdated 崩溃循环**：Data `/mobile/Library/Logs/CrashReporter` 有 9 份
+  `softwareupdated-*.ips`（最新已取回 `build-work/crash-softwareupdated-latest.ips`）；异常是
+  `EXC_BAD_ACCESS / SIGSEGV / KERN_INVALID_ADDRESS at 0x20`，main 线程
+  `objc_release → AutoreleasePoolPage::releaseUntil → objc_autoreleasePoolPop → softwareupdated main+1612`，
+  `consecutiveCrashCount=2`。状态文件 `/mobile/Library/SoftwareUpdateCore/softwareupdateservicesd.state`（15,204 B），
+  `/mobile/Library/SoftwareUpdates*`、`/db/softwareupdated` 缺失。该页面属于 MobileSoftwareUpdate 路径，
+  不是触摸驱动问题；换 Diting OS 后是否仍出现未观察。
+- **诊断通道未打通（addon21/22/23 未观察）**：addon22（kernel `9b8e4c6bf936adb7a5ecac05a919224e01724f6ca5147b1ce7d322e417282d84`，
+  镜像 `9463932459e525b856badd41b3f78a9717092d78696b009d4d3a4109d60120df`）与 addon23（镜像
+  `f5bb6e72a63bd348522a9d7f932c91dbb266a220b17cc07931632e0bea517966`，kernel 同上，7 文件 addon 含
+  `firmware/adsp.mbn` 23,380,392 B `d299d413…`）都带 `diting_usb=1`，但 Windows 5 分钟窗口内没有枚举任何
+  COM/CDC（无 05AC/18D1/2717/05C6，也无 unknown 设备）；addon23 回读的 `ramoops-addon23.bin` 与
+  `ramoops-addon18c.bin` **逐字节相同**（sha256 `e93d1fa10b0dda114a4f7bcb88e25466986b8938899e445a0bf6d7c98ec0a252`）
+  ⇒ `9b8e4c6b` 内核不写 UFS ramoops，addon21/22/23 的 console 与功能结果都未观察、不得推断。后续诊断镜像必须用
+  会写 ramoops 的 `03b90020`/`e991983d` 系内核（或先解决 CDC）。
+- **GPU 流畅度限制器（task-24，memo `build-work/evidence-20261115-gpu-framerate/README.md`）**：固定 120 Hz、
+  预算 8.33 ms；`T pipeline n=24 total=100ms max=11ms`、`T library 15ms`、`PR functions resumed=0`、
+  `V cache hit27 miss23 wr0`、`P0 … QuartzCore.framework/default.metallib InvalidFile`；`H frame-enc` 4/16 帧
+  ≥16 ms（含 1 帧 128–255 ms）；GPU `ctc` mean 5241 µs max 8077 µs、commit→complete mean 4643 µs max 16000 µs；
+  帧间隔 8,8,8,8,12,13 ms（≈125/125/125/125/83/77 fps）。根因是 plugin 构建时没给 `--prime-list`
+  （`scripts/build-diting-metal-plugin.py:21,48-54` 支持 `-Wl,-sectcreate,__DATA,__primelist,…`，但
+  `build-work/metal-out/plugin/build-report.json` 无 `-sectcreate`、bundle 无 `.primelist`），运行期 cache 也从不写盘
+  （`wr0`）。修复顺序：primelist 重建 → cache 持久化 → 再看 encode/GPU；`DitingMetalPlugin.mm:184-198` 的 primer
+  代码本身存在，只是没有输入列表。
+- **触摸延迟诊断补丁**：`patches/xnu-ipados18/zzzzzzzzzzzzzzzzzz-diting-touch-latency.patch`（88 行，sha256
+  `7c22b77900eccaed6825b945a24aa121ed40e176b25774631ed3d28e2ca57fe3`）已加入 `series`；bring-up 构建验证通过
+  （kernel `b02fe3c2…`），尚未进 release 镜像。touch-lag memo 结论：主机路径最坏约 11 ms，主要未知项是 THP 帧到达
+  间隔（驱动目前没有帧间隔计数），先加 instrumentation 再改行为；11-14 的卡顿镜像还同时跑了 THP 与坐标轮询。
+- **构建脚本默认值（task-23）**：`scripts/build-release-image-linux.py` 现在默认 `--diagnostics`（追加
+  `diting_usb=1`、`diting_ufslog=1`、`diting_ramoops_ufs=1`、`diting_data_reserve=4`、
+  `diting_adsp-fw=/private/var/ngpu/firmware`、`diting_ufs_stall=0`，`--arg` 仍可覆盖）并要求 `--gpu-addon`；
+  addon23（`f5bb6e72…`，kernel `9b8e4c6b…`、7 文件 addon）已构建但未观察。
+- 本轮只做只读回读与离线分析：没有 flash/dd/写分区、没有 CI、没有 push；设备回到 TWRP recovery。
