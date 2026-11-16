@@ -1753,3 +1753,25 @@ work is the boot itself, not the inputs.
   `merge-checklist.md` 的 core → diting-ci → 切默认顺序。
 - 证据：`build-work/evidence-20261116-adt-gen/`（README §14–15、`addon34-official-adt.img`、`ab-compare.json`、`merge-checklist.md`）。
   本轮只记录，未上机、未派 CI。
+
+## 2026-11-16 — addon36：RPMh + official-ADT 组合候选（条件性）
+
+- 镜像：`diting-addon36-rpmh-official-adt.img` 101,187,584 B sha256
+  `931bd48e64657bf5364ee4ec68f022b3c7e5c5dbf07f1e8bbe2a9c2d39a1ac75`
+  （路径 `build-work/evidence-20261116-combined/`）；独立复跑 `check-loader-adt-contract.py` PASS、sha 匹配。
+- 组合内容：RPMh 完成判据（diting-ci **dev** `5241607`，kernel
+  `0911d97d1ca075a8f3bb342df941f69bf91e204425045187f86b80c300daaeff`，含 `committed via=%s`）+ official-ADT
+  （`--official-adt`，ADT `eb0d61f787305bb4fe3ab9851e895e1f4d54c8407d3138018b5940fa044a43cf` 17,572 B，含 `/psci`、`/arm-io/ufshc`、cpu0..7）
+  + addon31 artifacts（addon `735fbc6d…`：plugin `f8cb839b…`、bridge `2a4ef86d…`、turnip `6001cadb…`、adsp `d299d413…`）
+  + addon31-full args（52 tokens/999 chars sha `d48a1b8c…`，cpus=8）。manifest `a289a85c…` == addon31-full，PONGFAT1 CRC `0xaf74a18a`，
+  gates PASS（layout/CRC、manifest==args、ADT==SHA-384、contract/storage、structure==kernel slot）。
+- 三向 diff（`addon36-3way.json`）：vs **addon31-full**（`67208eeb…`）= kernel `0911d97d…` vs `0c1a2c1f…` + ADT official 17,572 B vs old 15,960 B
+  （两个 fix 的精确增量）；vs **addon35**（`f7866bc3…`）= 仅 ADT（`eb0d61f7…` vs `2d3de3d3…`，多 `/psci` + `/arm-io/ufshc`）；
+  vs **addon34**（`f7a9ec73…`）= 仅 kernel（`0911d97d…` vs `0c1a2c1f…`；ADT 节点集相同，只有动态值不同）。
+- **条件规则**：addon36 **只**在 addon35 通过（ADSP stage 7→8+、smpe3 physical ready）**且** addon34 通过
+  （official ADT 正常启动、无 AppleARMCPU/IOKit/NativeUfs 回归）之后才测试；任一失败即弃用 addon36，fallback addon31-full。
+  通过后预期一张镜像同时具备两项行为：ADSP 7→8+、smpe3/rails 就绪、桌面/触摸不变、GPU 回归与 addon31-full 一致。
+- 构建说明：复用 dev `5241607` 的 `0911d97d…` kernel（当前 dev `416901c` 非文档树与 `5241607` 相同，`committed via=%s` 字面量在），
+  official-ADT 经私有 device-input dts view（cpu1..7 去掉 disabled 行）构建；未改源码、main 未动。
+- 证据：`build-work/evidence-20261116-combined/README.md`、`addon36-3way.json`、`addon36-build.log`、`args.json`、`final.log`。
+  本轮只记录，未上机、未派 CI。
