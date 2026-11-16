@@ -109,6 +109,9 @@ DITING_INITRD_DISK_ENABLED = "1" # Set 0 to isolate SEC/HOB without the disk DXE
 
 [payload]
 tools = true
+# The DarwinBoot loader is part of the firmware volume; explicit for the official schema
+# (docs/zh/reference/configuration.md [payload] loader).
+loader = "firmware"
 # The boot menu entry the firmware's DarwinBoot lists first, and the volume label of payload.img.
 title = "Diting iPadOS 18.7.10"
 volume = "UNIXNU"
@@ -165,7 +168,19 @@ kernel_args = [
   "diting_rootful=1",
 ]
 
+[payload.runtime]
+# Official pre-kernel runtime hook (docs/zh/reference/configuration.md): IPSW trust modules,
+# source-built GPU/audio addons and the first-install Data seed. Diting's userland predates this
+# builder and its GPU addon is packaged by scripts/build-release-image-linux.py today, so the hook
+# stays disabled - the same behavior as the section being absent - until a Diting runtime tool
+# replaces that path.
+enabled = false
+
 [payload.adt]
+# [payload.adt] tool stays unset: the official payload step runs
+# `<tool> --output ... --dram-size ...`, while the Diting generator
+# (scripts/finalize-diting-adt.py) has a different CLI and also writes the v4 boot
+# container; align that CLI before enabling the official payload step.
 # schema_version 2 builds the ADT from the hardware DTS through devicetree.generate(); these keys
 # are the ones that function reads from [payload.adt]. The DarwinBoot allocation window is 4 GiB,
 # the window the first bring-up boot used.

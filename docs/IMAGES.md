@@ -34,7 +34,10 @@
 
 ## 3. 重建入口
 
-- release v4 镜像：`scripts/build-release-image-linux.py`（默认 `--diagnostics`，需要 `--gpu-addon`）。
+- release v4 镜像（当前生产路径）：`scripts/build-release-image-linux.py`（默认 `--diagnostics`，需要 `--gpu-addon`）。
+- 官方打包路径（`scripts/package.sh` 与上游模板逐字节相同）：`scripts/package.sh --check --no-deps` 已验证（28 patches + defconfig）；
+  完整 `--no-deps` 目前在 kernel 步停止于设备配方的 macOS 默认 `volume-layout` 路径，需本地输入 `DITING_VOLUME_LAYOUT`；
+  对齐细节与迁移表见 `docs/GAP-ANALYSIS.md §5`（证据 `build-work/evidence-20261116-package-align/`）。
 - bring-up / addon 镜像：`build-work/evidence-*/build-*.sh` 与 addon 打包脚本；发布前用 `scripts/check-loader-adt-contract.py`、`check-storage-bindings.py` 校验。
 - userdata sparse：`python3 scripts/make-sparse-image.py <raw> <out.sparse> --chunk-mib 16`。
 - 全窗写入：`scripts/flash-userdata-image.py --image <raw> --sparse <sparse> --product diting`。

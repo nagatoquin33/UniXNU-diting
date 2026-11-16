@@ -39,3 +39,43 @@
 5. 打包脚本回归 `scripts/package.sh` 模板，板级差异只放 `board.toml`。
 
 > 说明：本文是工程审计，不改变已验证镜像；任何迁移都按单变量上机验证。
+
+## 5. 打包对齐进度（2026-11-16）
+
+- `scripts/package.sh` 与上游模板逐字节相同：sha256 `f7b8e3ea043058b9c61d5b45c32b8e7669a85737c89d55d404957c3b43ec4aab`（`UniXNU/templates/package.sh`）。板级只应改 `board.toml`。
+- 官方 `--check` 通过（合并 core `fd2f4d1`，`--no-deps`）：`== step deps / preflight / patches`，28 个补丁顺序解析、defconfig `diting_ipados18_defconfig`、OS `ipados-18.7.10-22H374`（证据 `build-work/evidence-20261116-package-align/check-nodeps.log`）。
+- 官方 `--no-deps` 首次失败在 **kernel 步**（不是 package.sh）：设备配方 `kits/DitingPlatform24/build-ipados18-diting-macos.py:121` 默认读取 macOS 机器路径
+  `/Volumes/DitingDev/build/Diting-iPadOS18-inputs/volume-layout.json`，本机不存在 → `FileNotFoundError`；应在本地输入层提供（`DITING_VOLUME_LAYOUT` / `unixnu.local.toml`），不属 `package.sh` 改动。日志 `release-nodeps*.log`。
+
+### board.toml 对照官方 schema
+
+| 区块/字段 | 当前 | 官方契约 | 处理 |
+| --- | --- | --- | --- |
+| `[package] unixnu` / `[package.defconfig]` | 有 | `release` 读 checkout 与各 OS defconfig | 保留 |
+| `[payload] kernel_args` | 有（39 项 / 805 字符） | 官方 payload 直接读；上限 1000 字节 | 保留；诊断/GPU 参数迁移见下表 |
+| `[payload] loader` | 缺（默认 `firmware`） | `firmware` 或驱动加载 | 显式写 `firmware` |
+| `[payload.adt] tool` | 缺 | 官方 payload 调 `<tool> --output --dram-size` | 未启用：Diting 生成器 CLI 不同，见下表 |
+| `[payload.runtime]` | 缺 | 构建前准备 trust/addon/Data 种子 | 先加 `enabled = false`（与缺省等价），迁移见下表 |
+| `[bootimg] dtb` | 有 | 固件 preflight 生成的 DTB | 保留 |
+| `[firmware] config/dsc/fd/preflight/patches/submodules/packages` | 有 | 固件构建契约 | 保留（含 `{tree}/drivers/DarwinBoot24`） |
+| `os_overrides` | 无 | 多 OS 配置的板级覆盖 | 单 OS 不需要；新增目标时再加 |
+
+### 迁移表（keep / replace / retire）
+
+| 项 | 现状 | 目标 | 决定 | 风险/前置 |
+| --- | --- | --- | --- | --- |
+| `scripts/package.sh` | 与模板逐字节相同 | 固定模板 | **keep** | 无 |
+| `board.toml` 板级输入 | `[package]`/`[bootimg]`/`[firmware]`/`[payload]` | 官方契约 | **keep**（本次显式 `loader`、加入 disabled runtime 钩子） | 无行为变化 |
+| `scripts/build-release-image-linux.py` 的诊断/`gpu-addon` 注入 | `--diagnostics` 默认追加 6 个参数并 mtools 注入 addon | `[payload] kernel_args`（诊断）/`[payload.runtime] gpu_addon`（addon） | **replace**（分两步） | 参数从 805→约 950 字符，仍 <1000；改后需单变量上机确认，未验证前保留脚本 |
+| `.gpuaddon` 容器 + mtools 注入 + durability 补丁 | 自定义传输层 | `[payload.runtime] gpu_addon = true` + 上游 runtime builder | **replace**（依赖 runtime 工具支持 Diting 用户态/信任模块） | 无 Diting runtime tool 前不可切 |
+| `scripts/finalize-diting-adt.py` | 生成 ADT/manifest 并写 v4 容器 | 官方 `[payload.adt] tool` + `[bootimg]` pack | **replace**（先对齐 CLI；v4 容器仍需 core 支持） | 官方 pack 只写 v0–v2 头；v4 由固件要求，需 core/脚本变更 → 报告后再动 |
+| `scripts/pack-diting-stage.py` / addon 打包脚本 | 自定义 staging | 官方 build/pack 步骤 | **retire**（与 finalize/runtime 迁移同步） | 排序依赖，放在最后 |
+| `patches/xnu-ipados18` + `drivers/Diting*` | 板级必要适配 | 保留 | **keep** | 与打包无关 |
+
+### 需要先报告的 functional 变更（本次不编辑 scripts）
+
+1. `kits/DitingPlatform24/build-ipados18-diting-macos.py` 的 `--volume-layout` 默认是 macOS 机器路径，应改为本地输入（env/`unixnu.local.toml`）而不是脚本默认。
+2. `[payload.adt] tool` 的 CLI 与官方 `--output/--dram-size` 不一致；切换官方 payload 步前需要生成器适配，且 v4 boot 容器需要 core 的 bootimg 支持（官方模板只写 v0–v2）。
+3. `[payload.runtime]` 需要 Diting 的 runtime tool 才能替换自定义 addon/trust 路径。
+
+> 结论：`package.sh` 与板级 principal 输入已对齐；真正的差异集中在**设备配方默认值**、**ADT 生成器 CLI**、**v4 容器**和**runtime/addon 生成器**四处，全部需要功能性改动，先报告再实施。本轮只记录对齐结果，不改变已验证镜像。
