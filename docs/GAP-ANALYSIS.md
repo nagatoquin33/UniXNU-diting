@@ -21,7 +21,13 @@
 2. **OS 布局错配**：整盘 userdata 写入的 11-09 镜像实际是 Pong 布局（无 `/diting`），导致桌面黑屏/更新页；Diting 布局 OS 才有 `/dev/diting-touch`。
 3. **重新生成 ADT**：破坏内存拓扑触发 `AppleARMCPU` panic；官方 ADT 由 profile 生成，正确做法是修输入而不是二进制补丁。
 4. **帧率问题顺序反了**：先自定义遥测、primelist、cache 计数和上游 patch，之后才读官方 `gpu-diagnostics`；官方现成的 `gpu-trace`/`[gpu slow]` 能更早定位。
-5. **电源/关机**：没有走平台 power 路径，先后用 boot_b TWRP、Settings 关机，最后才补 PSCI SYSTEM_OFF 长按。
+5. **GPU primelist 是构建主机臆造**：随插件发布的 10 行 primelist 中 6 条路径在真实 OS 卷不存在
+   （`UIKitCore`/`CoreMaterial`/`CorePDF`/`CoreChartSwift`/`MetalPerformanceShaders`/`MetalPerformanceShadersGraph`
+   的 `default.metallib`，用 `tools/apfs/apfs.py stat` 对 `prepared-420734-os.img` 验证）；真实 OS 卷有
+   **167** 个 `.metallib`。已新增 `scripts/gen-diting-prime-list.py`：从 OS 窗口镜像枚举并由 `--verify`
+   逐条 `stat`（不可解析则拒绝/可 `--drop-missing`），输出确定性排序；addon31 插件内嵌 167 行、13,172 B、
+   sha256 `0ca614ac7bd23f680b9fa77c944fccdd8cd6c6bec3a1974589da400ed2531604`。
+6. **电源/关机**：没有走平台 power 路径，先后用 boot_b TWRP、Settings 关机，最后才补 PSCI SYSTEM_OFF 长按。
 
 ## 3. 必要适配（不是轮子）
 
