@@ -68,6 +68,25 @@ adb exec-out dd if=/dev/block/sda37 bs=4096 skip=58615291 count=1024 of=ramoops.
 - 正常：长按电源 ≥ `diting_pwrkey_long`（默认 5000 ms），addon26+ 内核走 PSCI SYSTEM_OFF；
 - 异常：长按电源 10–15 秒硬断电；不要反复刷 boot 分区。
 
+### F. panic 屏（SHENG-PANIC-1 QR）
+
+panic hook 在 panic 文本旁画 QR（头 `SHENG-PANIC-1`），载荷含寄存器、UUID、镜像基址与被截断的 reason。
+流程：**拍照 → 离线解码 → 断电重进 fastboot**（不要在 panic 后反复重启）：
+
+```sh
+python3 -m pip install --user --break-system-packages zxing-cpp pillow   # 一次性
+python3 scripts/decode-sheng-panic-qr.py panic-photo.jpg --json          # 或 --out record.txt
+```
+
+- QR 只含寄存器与被截断的 reason（`TRUNCATED=1`）；完整 console 仍需 ramoops（场景 E）。
+- 已知一次真实 panic（2026-11-16，用户屏拍离线解码）：UUID `218FDCCE-86F6-326F-9BC1-536380109D02`、
+  ELR `FFFFFE00075C3220`、FAR `FFFFFECF9BD00000`、REASON `UFS ROOT FAILURE: no userdata partition …`；
+  解码记录見 `build-work/evidence-20261116-panic-qr/`。
+- `no userdata partition` 来自 `drivers/NativeUfs/RootLayout.h`（GPT 解析段 `:139-142`）：GPT 头/表 CRC 已通过，
+  只是没有名为 `userdata` 的 GPT 分区（或首尾 LBA 非法）⇒ **userdata 布局/内核预期不匹配**，不是读 UFS 失败；
+  先核对镜像 sha、slot 与 kernel 几何（`manifest=`/`stage=` 诊断），再决定是否走场景 D/E。
+- 取证后重新进 fastboot：长按 **音量下 + 电源** 10–15 秒（见场景 B）。
+
 ## 3. 安全规则
 
 - 任何 `fastboot flash` / 窗口写入前必须获得明确授权，并先 `sha256sum` 校验镜像；

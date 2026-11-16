@@ -1679,3 +1679,27 @@ work is the boot itself, not the inputs.
   `diting_addon-fw`/`diting_data_reserve=4` 等 args 在 addon26+ 与 addon30/31/32/33 候选里一致。
 - 结论：写入 → 白名单 → 加载三段在源码上闭合，`/ngpu` 恢复链是设计内路径；设备侧仍需观察的是启动时 addon 拷贝成功
   （`written=0 same=…`）与 ADSP 加载推进到 ready（当前 blocker 仍是 ADSP stage 7 `0x30030=7` 超时 -60）。本轮无设备/CI。
+
+## 2026-11-16 — panic 屏 QR 解码通道（SHENG-PANIC-1）
+
+- 新增 `scripts/decode-sheng-panic-qr.py`（来自 lead 的已测脚本；Python 3，依赖 `zxing-cpp` + `Pillow`，
+  用户目录安装：`python3 -m pip install --user --break-system-packages zxing-cpp pillow`）：解码 panic 屏 QR，
+  `--json` 输出结构化记录、`--out` 另存文本，非 `SHENG-PANIC` QR 原样 `{"raw": ...}` 返回。
+- 通道能力：QR 载荷字段 `UUID/CALLER/SP/ELR/ESR/FAR/PHYS/IMAGE/TOTAL/DROPPED/REGS/REASON/TRUNCATED`；
+  **reason 在 QR 中被截断**（`TRUNCATED=1`），只用于快速取寄存器与 panic 类别，完整 console 仍需 ramoops
+  （userdata 尾部 4 MiB，TWRP `dd`）；USB CDC console 多次尝试未取得，不列为通道。
+- 一次真实 panic 记录（2026-11-16，用户屏拍离线解码）：UUID `218FDCCE-86F6-326F-9BC1-536380109D02`、
+  CALLER `FFFFFE0009CDCE3C`、ELR `FFFFFE00075C3220`、ESR `0000000096000047`、FAR `FFFFFECF9BD00000`、
+  IMAGE `FFFFFE0007004000`、TOTAL `0x4217`、REASON `UFS ROOT FAILURE: no userdata partition stage=GPT entries
+  prepared=0 published=0 reads=0 failures=0 … HC cap=3587031f ver=00000400 hcs=0000010f hce=00000001 db=0 is=0 …`、
+  TRUNCATED=1；存为 `build-work/evidence-20261116-panic-qr/record.json`。
+- 解读：该 reason 来自 `drivers/NativeUfs/RootLayout.h` GPT 解析段 `:139-142`（`!found ||
+  userdataLast < userdataFirst` → `"no userdata partition"`）：GPT 头/表 CRC 已通过，只是没有名为 userdata 的
+  GPT 分区（或首尾 LBA 非法）⇒ **userdata 布局与内核预期不匹配**（镜像/slot 与 kernel 几何不一致），
+  不是读 UFS 失败；下一步核对镜像 sha/slot 与 `manifest=`/`stage=` 诊断。
+- 离线验证：脚本语法/CLI 安装；用 `segno` 以同一字段集合成 `SHENG-PANIC-1` QR 解码，13 字段 +
+  `reason_truncated: true` 全对（`evidence-20261116-panic-qr/synthetic-decode.json`），非 panic QR passthrough 正确；
+  原始屏拍照片不在本工作区（仅 lead/用户侧），证据目录保存解码记录 + 合成回归，拿到照片可同命令逐字段对照。
+- 文档：`docs/STATUS.md` 当前设备表新增「证据通道」行（ramoops / Advanced Logger 菜单 / panic QR / USB CDC 不可用）
+  并加证据路径；`docs/RECOVERY.md` 新增场景 F（拍照 → 解码 → 断电重进 fastboot + RootLayout 解读 + ramoops 提示）。
+  本轮未上机、未派 CI。

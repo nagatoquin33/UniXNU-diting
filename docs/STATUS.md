@@ -28,6 +28,7 @@
 | GPU / Metal 路径 | `DITING ADRENO: CP ready`、`DITING METAL: real IOAcceleratorES provider published`、`… status=0x0`、`DITING SCANOUT … status=0x0`，GPU submits 有记录 |
 | 八核 | CPU0–7 均 `first boot completed`；SpringBoard / backboardd 正常运行 |
 | 插件 / 持久化 | 六/七件 GPU+ADSP addon 分片同步写入后持久化：`written=0 same=6/7 failed=0`，Extensions stage/status 5/0；`/ngpu/firmware/adsp.mbn` 23,380,392 B 在盘 |
+| 证据通道 | ramoops（userdata 尾部 4 MiB，TWRP `dd` 回读，见场景 E）；Advanced Logger 菜单镜像（`greenI2-log-menu.img`，固件日志导出）；panic 屏 QR（`SHENG-PANIC-1`：寄存器 + 截断 reason，`scripts/decode-sheng-panic-qr.py`，见 `evidence-20261116-panic-qr/README.md`）；USB CDC console 多次尝试未取得（不作为通道） |
 | ADSP //ngpu 链路（静态） | addon 写入链 → 加载链已按源码逐点核对：`zzzzzzzzzzzzzzzzzz-diting-gpu-addon.patch` 先 `mkdir` 缺失父目录（含 `/private/var/ngpu` 本身，`:194-201`），再对每个 addon 成员 `snprintf("/private/var/ngpu/%s", name)`（`:292`），故 `firmware/adsp.mbn` 落在 `/private/var/ngpu/firmware/adsp.mbn`；`DitingFirmware.c:11-12` 白名单恰好接受 `/diting/firmware/adsp.mbn` 与 `/private/var/ngpu/firmware/adsp.mbn`；`DitingAdsp.cpp` `openFirmware()` 用 `snprintf("%s/adsp.mbn", base)`（`:495`，base 缺省 `/diting/firmware`），`start()` 从 `diting_adsp-fw` 解析 base（`:512`，我们的 args = `/private/var/ngpu/firmware`），读不到时按 ENOENT/ENXIO/EIO 重试 90×1 s。7 文件 addon（如 `735fbc6d…`）确含 `firmware/adsp.mbn` sha `d299d413…`；静态链路自洽，剩余设备侧未知只有「启动时 addon 拷贝成功」与「ADSP 加载到 ready」 |
 | launchd | PID 1 `exec /sbin/launchd` 的 EFAULT 已修复 |
 
@@ -45,6 +46,7 @@
 - Turnip 重建 / addon28：`build-work/evidence-20261116-turnip/README.md`、`addon28-report.json`、`verification.json`
 - addon29 追踪变体：`build-work/evidence-20261116-gpu-official/verification-addon29.json`、`build-image-addon29.log`（产物逐字节与 addon28 相同，仅 args 不同）
 - ADT 官方路径候选/A-B：`build-work/evidence-20261116-adt-gen/README.md` §14–15、`ab-compare.json`、`merge-checklist.md`（合并门槛与回滚）
+- panic QR 通道：`build-work/evidence-20261116-panic-qr/README.md`、`record.json`；runbook `device-runs/2026-11-16-official/runbook.md` §5b
 - 仓库记录：`AGENTS.md` 的 2026-11-15/16 各条
 
 ## 当前阻塞（真机日志定位，非推断）
