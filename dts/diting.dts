@@ -987,3 +987,16 @@
     diting,smmu-match-groups = <120>;
     diting,ufs-spi = <265>;
 };
+
+/* Diting bring-up: ArmCpu starts the secondaries through its own path. The
+   official ADT generator exports every enabled DTS CPU and adds /psci for
+   more than one; the validated B1 ADT carries a single boot CPU and no /psci,
+   and AppleARMCPU must not match sibling cpu nodes. Keep them disabled here so
+   the tree stays the topology the board boots with. */
+&cpu1 { status = "disabled"; };
+&cpu2 { status = "disabled"; };
+&cpu3 { status = "disabled"; };
+&cpu4 { status = "disabled"; };
+&cpu5 { status = "disabled"; };
+&cpu6 { status = "disabled"; };
+&cpu7 { status = "disabled"; };
