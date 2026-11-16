@@ -5,6 +5,10 @@
 #ifndef DARWIN_BOOT_PACKED_RAMDISK_H
 #define DARWIN_BOOT_PACKED_RAMDISK_H
 
+// A packed disk handed to the native sparse block driver keeps only its nonzero pages (KeepPacked), so its logical size is bounded by the
+// disk format, not by memory; a dense expansion still has to fit the window, which the caller checks.
+#define SIZE_MAX_LOGICAL  (1ULL << 40)
+
 STATIC
 BOOLEAN
 RamdiskLayout (CONST VOID *Input, UINTN InputSize, UINTN *Expanded, BOOLEAN *Packed)
@@ -19,7 +23,7 @@ RamdiskLayout (CONST VOID *Input, UINTN InputSize, UINTN *Expanded, BOOLEAN *Pac
       (ReadUnaligned32 ((CONST UINT32 *)(Bytes + 12)) != EFI_PAGE_SIZE)) { return FALSE; }
   Logical = ReadUnaligned64 ((CONST UINT64 *)(Bytes + 16));
   Count = ReadUnaligned64 ((CONST UINT64 *)(Bytes + 24));
-  if ((Logical == 0) || (Logical > SIZE_2GB) || (Logical & (EFI_PAGE_SIZE - 1)) ||
+  if ((Logical == 0) || (Logical > SIZE_MAX_LOGICAL) || (Logical & (EFI_PAGE_SIZE - 1)) ||
       (Count > 65536) || (Count > (InputSize - 32) / 16)) { return FALSE; }
   Table = 32 + Count * 16;
   Cursor = Table;

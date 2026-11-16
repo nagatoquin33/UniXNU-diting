@@ -3,8 +3,8 @@
 # Build the Diting firmware volume (SILICIUM_UEFI.fd) on Linux.
 #
 # Same steps as .github/workflows/package.yml "build the diting volume", with one
-# deliberate difference: the loader is the device's drivers/DarwinBoot24 package,
-# copied over Platforms/Xiaomi/DarwinBootPkg. darwin-boot-diting.patch is NOT
+# deliberate difference: the loader is the official drivers/DarwinBoot component (pin 3c75734),
+# copied over Platforms/Xiaomi/DarwinBootPkg without source edits. darwin-boot-diting.patch is NOT
 # applied: it only renames pong-* tokens in the vendored loader and leaves the
 # package split across two sources.
 #
@@ -240,9 +240,9 @@ cp -a "$DEVICE/platform-firmware/ditingPkg/FdtBlob/sm8475-xiaomi-diting.dtb" "$U
 cp -a "$DEVICE/platform-firmware/diting.toml" "$UEVI/Resources/Configs/diting.toml"
 
 # 3. Single loader source: replace the vendored package with DarwinBoot24.
-log "replace DarwinBootPkg with drivers/DarwinBoot24"
+log "replace DarwinBootPkg with official drivers/DarwinBoot"
 rm -rf "$UEVI/Platforms/Xiaomi/DarwinBootPkg"
-cp -a "$DEVICE/drivers/DarwinBoot24/DarwinBootPkg" "$UEVI/Platforms/Xiaomi/DarwinBootPkg"
+cp -a "$DEVICE/drivers/DarwinBoot/DarwinBootPkg" "$UEVI/Platforms/Xiaomi/DarwinBootPkg"
 
 # 4. AdvancedLogger: retry LocateProtocol until the protocol exists.
 log "patch AdvancedLoggerLib locate latch"
@@ -280,30 +280,7 @@ else:
     print("retries until the protocol exists")
 PY
 
-# 5. Mirror the loader's three Print lines to DEBUG_ERROR (Advanced Logger).
-log "mirror DarwinBoot24 Print lines to DEBUG_ERROR"
-python3 - "$UEVI" <<'PY'
-import sys
-from pathlib import Path
-uefi = Path(sys.argv[1])
-boot = uefi / "Platforms/Xiaomi/DarwinBootPkg/Driver/DarwinBoot.c"
-text = boot.read_bytes()
-nl = b"\r\n" if b"\r\n" in text else b"\n"
-prints = [
-    b'Print (L"DARWINBOOT: unsupported inputs or exception level; firmware retained\\n");',
-    b'Print (L"DARWINBOOT: inputs validated; exiting boot services\\n");',
-    b'Print (L"DARWINBOOT: boot refused: %r; firmware retained\\n", Status);',
-]
-for line in prints:
-    if line not in text:
-        raise SystemExit("missing DarwinBoot24 line: " + line.decode())
-    debug = b"DEBUG ((DEBUG_ERROR, " + line[len(b"Print (L"):-2] + b"));"
-    if debug in text:
-        continue
-    text = text.replace(line, debug + nl + line, 1)
-boot.write_bytes(text)
-print("mirrored")
-PY
+# 5. (removed) the official DarwinBoot source is used unmodified.
 
 # 6. Python environment for stuart/build_uefi.py.
 #

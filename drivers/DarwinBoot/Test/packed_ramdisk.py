@@ -7,7 +7,7 @@ import struct
 
 PAGE = 4096
 MAX_INPUT = 256 * 1024**2
-MAX_LOGICAL = 2 * 1024**3
+MAX_LOGICAL = 1024**4
 ZERO = bytes(1024**2)
 
 
@@ -35,7 +35,12 @@ def regions(blob):
     return logical, result
 
 
+PLAIN_HASH_LIMIT = 2 * 1024**3
+
+
 def logical_hash(logical, extents):
+    if logical > PLAIN_HASH_LIMIT:
+        return seed_identity(logical, extents)
     digest = hashlib.sha256()
     end = 0
     for offset, data in [*extents, (logical, b'')]:
@@ -45,6 +50,19 @@ def logical_hash(logical, extents):
             end += count
         digest.update(data)
         end += len(data)
+    return digest.hexdigest()
+
+
+def seed_identity(logical, extents):
+    """Identity of a disk above 2 GiB, as the native block driver computes it (drivers/RamBlock/SeedDisk.h seedIdentity): the size and
+    the nonzero pages with their indexes, so hashing a mostly empty disk of hundreds of GiB takes no longer than its content."""
+    digest = hashlib.sha256()
+    digest.update(b'SHNGSEED2' + struct.pack('<Q', logical))
+    for offset, data in extents:
+        for at in range(0, len(data), PAGE):
+            page = bytes(data[at:at + PAGE])
+            if any(page):
+                digest.update(struct.pack('<Q', (offset + at) // PAGE) + page)
     return digest.hexdigest()
 
 
@@ -66,19 +84,48 @@ def inspect(path):
     return dict(bytes=size, sha256=encoded_hash, packed=False), blob[:PAGE]
 
 
+def data_ranges(stream, logical):
+    """(start, end) of the regions of the file that hold data, skipping holes (a sparse raw image of a large disk is mostly holes)."""
+    import os
+    fd = stream.fileno()
+    position = 0
+    while position < logical:
+        try:
+            start = os.lseek(fd, position, os.SEEK_DATA)
+        except OSError:
+            return
+        end = min(os.lseek(fd, start, os.SEEK_HOLE), logical)
+        yield start, end
+        position = end
+
+
 def pack(source, destination):
     logical = source.stat().st_size
     if not 0 < logical <= MAX_LOGICAL or logical % PAGE:
-        raise ValueError('Raw input must be page aligned and at most 2 GiB')
+        raise ValueError('Raw input must be page aligned and at most 1 TiB')
     extents = []
     digest = hashlib.sha256()
     total = 32
+    large = logical > PLAIN_HASH_LIMIT
     with source.open('rb') as stream:
-        for base in range(0, logical, len(ZERO)):
+        # Above 2 GiB only the data regions are read; the identity (seed_identity) is computed from the result below.
+        def chunk_bases():
+            for start, end in data_ranges(stream, logical):
+                first = (start // len(ZERO)) * len(ZERO)
+                for chunk_start in range(first, end, len(ZERO)):
+                    yield chunk_start
+        bases = chunk_bases() if large else range(0, logical, len(ZERO))
+        last = -1
+        for base in bases:
+            if base <= last:
+                continue
+            last = base
+            stream.seek(base)
             chunk = stream.read(min(len(ZERO), logical - base))
             if len(chunk) != min(len(ZERO), logical - base):
                 raise ValueError('Raw input changed during packing')
-            digest.update(chunk)
+            if not large:
+                digest.update(chunk)
             for at in range(0, len(chunk), PAGE):
                 page = chunk[at:at + PAGE]
                 if not any(page):
@@ -99,7 +146,7 @@ def pack(source, destination):
         for _, data in extents:
             output.write(data)
     metadata, _ = inspect(destination)
-    if metadata['sha256'] != digest.hexdigest():
+    if not large and metadata['sha256'] != digest.hexdigest():
         raise ValueError('Packed reconstruction differs from complete raw input hash')
     return metadata
 

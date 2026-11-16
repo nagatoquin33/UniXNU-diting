@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check a boot image for the DarwinBoot <-> ADT property contract.
 
-The image's firmware volume must carry the DarwinBoot24 loader and the payload's
+The image's firmware volume must carry the DarwinBoot loader and the payload's
 ADT must use the same property names. Run it on a green image to see it PASS and
 on the pong-era image (e9b615bf...) to see it FAIL; a checker that cannot fail on
 the old image proves nothing.
@@ -26,6 +26,8 @@ from diting_adt_contract import parse_adt
 LZMA_GUID = uuid.UUID("EE4E5898-3914-4259-9D6E-DC7BD79403CF")
 OLD = (b"pong-allocatable-ram", b"pong-audio-dma", b"pong_ram_banks")
 NEW = (b"diting-allocatable-ram", b"diting-audio-dma", b"diting_ram_banks")
+OFFICIAL = (b"GpuAddon", b"RootPolicies", b"darwinboot-memory-size",
+            b"RAMDisk", b"PackedRAMDisk", b"TrustCache")
 
 
 def align(value):
@@ -166,9 +168,12 @@ def check_image(path):
     if loader is None:
         failures.append("no DarwinBoot image found in the firmware volume")
     else:
-        if "DarwinBoot24".encode("utf-16-le") not in loader and b"DarwinBoot24" not in loader:
-            failures.append("loader UI name is not DarwinBoot24")
-        for token in NEW:
+        if "DarwinBoot".encode("utf-16-le") not in loader and b"DarwinBoot" not in loader:
+            failures.append("loader UI name is not DarwinBoot")
+        # The fork loader knows the diting-* ADT names; the official component uses
+        # the documented DarwinBoot placeholder set instead.
+        expected = NEW if b"DarwinBoot24" in loader else OFFICIAL
+        for token in expected:
             if token not in loader:
                 failures.append(f"loader lacks {token.decode()}")
         for token in OLD:

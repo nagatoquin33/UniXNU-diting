@@ -183,7 +183,7 @@ submodules = ["Binaries", "Common/Mu", "Common/Mu_OEM_Sample", "Silicium-ACPI",
 packages = [
   "{uefi}",
   "{tree}/package",
-  "{tree}/drivers/DarwinBoot24",
+  "{tree}/drivers/DarwinBoot",
   "{edk2}",
   "{uefi}/Platforms/Xiaomi",
   "{uefi}/Common/Mu",

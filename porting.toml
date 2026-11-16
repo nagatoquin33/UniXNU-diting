@@ -4,7 +4,7 @@ schema_version = 1
 name = "diting"
 soc = "SM8475"
 os_profile = "ipados-18.7.10-22H374"
-summary = "Redmi K50 Ultra (diting/SM8475), iPadOS 18.7.10 / Darwin 24. The display, input, GPU, CPU, firmware and storage areas now carry device-observed milestones on Diting (desktop, Goodix GT9916 touch via /dev/diting-touch, GPU CP/METAL/SCANOUT, CPU0-7 first boot, DarwinBoot24 handoff, UFS three-window boot and addon persistence). The network, power and audio areas remain implemented and are Pong lineage, not Diting evidence."
+summary = "Redmi K50 Ultra (diting/SM8475), iPadOS 18.7.10 / Darwin 24. The display, input, GPU, CPU, firmware and storage areas now carry device-observed milestones on Diting (desktop, Goodix GT9916 touch via /dev/diting-touch, GPU CP/METAL/SCANOUT, CPU0-7 first boot, DarwinBoot handoff, UFS three-window boot and addon persistence). The network, power and audio areas remain implemented and are Pong lineage, not Diting evidence."
 
 [[area]]
 id = "configuration"
@@ -26,15 +26,15 @@ id = "firmware"
 status = "device-verified"
 provenance = "pong"
 components = ["DitingPlatform24"]
-paths = ["drivers/DarwinBoot24/**", "scripts/build-darwinboot24*", "platform-firmware/**", "assets/**"]
+paths = ["drivers/DarwinBoot/**", "scripts/build-darwinboot24*", "platform-firmware/**", "assets/**"]
 inputs = ["Pong live Android DT、NothingOSS SM8475源码与匹配22H374 restore"]
 configuration = ["board.toml、diting_ipados18_defconfig 与对应板级配置"]
-procedure = ["复用 Diting UEFI，DarwinBoot24 接管真实可分配区间并使用 PSCI。"]
-findings = ["现有设备可进入桌面，物理内存与可分配内存分别记录。", "drivers/DarwinBoot24 迁至 Chengdong-Yu/diting-darwin-boot24（曾以 submodule 引用，现 vendored 入仓），路径与构建脚本不变。", "2026-11-16 Diting 实机：DarwinBoot24（B1 修正固件卷）完成 handoff，进入 XNU console 并到桌面。"]
+procedure = ["复用 Diting UEFI，DarwinBoot 接管真实可分配区间并使用 PSCI。"]
+findings = ["现有设备可进入桌面，物理内存与可分配内存分别记录。", "drivers/DarwinBoot 迁至 Chengdong-Yu/diting-darwin-boot24（曾以 submodule 引用，现 vendored 入仓），路径与构建脚本不变。", "2026-11-16 Diting 实机：DarwinBoot（B1 修正固件卷）完成 handoff，进入 XNU console 并到桌面。"]
 completion = ["在设备上观察该接口的实际工作结果并保存对应日志"]
 limits = ["固件输入与UEFI源码在独立仓库。"]
 next_action = ["读取本轮启动日志并继续完成板级接口"]
-evidence = [{kind = "source", reference = "migration/format2/README.zh.md", result = "现有设备可进入桌面，物理内存与可分配内存分别记录。"}, {kind = "device", reference = "docs/STATUS.md", command = "fastboot boot diting-addon18.img; adb exec-out dd if=/dev/block/sda37 bs=4096 skip=58615291 count=1024", revision = "6d2c1b9fe7a56f32d1835704355db4535fb01a84", result = "2026-11-16 Diting device: DarwinBoot24 (B1 firmware volume) hands off to the XNU console and the desktop."}]
+evidence = [{kind = "source", reference = "migration/format2/README.zh.md", result = "现有设备可进入桌面，物理内存与可分配内存分别记录。"}, {kind = "device", reference = "docs/STATUS.md", command = "fastboot boot diting-addon18.img; adb exec-out dd if=/dev/block/sda37 bs=4096 skip=58615291 count=1024", revision = "6d2c1b9fe7a56f32d1835704355db4535fb01a84", result = "2026-11-16 Diting device: DarwinBoot (B1 firmware volume) hands off to the XNU console and the desktop."}]
 
 [[area]]
 id = "cpu"

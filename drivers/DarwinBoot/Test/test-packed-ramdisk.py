@@ -61,12 +61,12 @@ int decode(void *out, size_t capacity, void *p, size_t n) {
     assert lib.decode(out, len(raw), ctypes.create_string_buffer(blob), len(blob)) == 1
     assert out.raw == raw
     assert inspect(work / 'packed')[0]['bytes'] == len(raw)
-    maximum = struct.pack('<8sIIQQ', b'DBRDISK1', 1, 4096, 2 * 1024**3, 0)
-    assert valid(maximum) == (1, 2 * 1024**3)
-    assert regions(maximum) == (2 * 1024**3, [])
+    maximum = struct.pack('<8sIIQQ', b'DBRDISK1', 1, 4096, 1024**4, 0)
+    assert valid(maximum) == (1, 1024**4)
+    assert regions(maximum) == (1024**4, [])
     invalid = [blob[:31], blob[:-1], blob + b'x']
     for offset, format_, value in [(8, '<I', 2), (12, '<I', 16384),
-                                   (16, '<Q', 0), (16, '<Q', 0x80001000),
+                                   (16, '<Q', 0), (16, '<Q', 1024**4 + 4096),
                                    (24, '<Q', 65537), (32, '<Q', 4097),
                                    (40, '<Q', 0), (40, '<Q', 0xfffffffffffff000),
                                    (48, '<Q', 0), (48, '<Q', 16384)]:
@@ -81,4 +81,4 @@ int decode(void *out, size_t capacity, void *p, size_t n) {
             pass
         else:
             raise AssertionError('Python accepted malformed input rejected by C')
-    print(f'PASS: actual C parser/copy, sparse round-trip, 2 GiB boundary, {len(invalid)} refusal cases')
+    print(f'PASS: actual C parser/copy, sparse round-trip, 1 TiB boundary, {len(invalid)} refusal cases')
