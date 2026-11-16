@@ -1660,3 +1660,22 @@ work is the boot itself, not the inputs.
 - 边界：**`package.yml` 的 core pin 未动**（单独决策）；本次只改 record workflow。推送会触发一次 record workflow，
   其结果是 CI 侧状态，不是设备结论。
 - 证据：`build-work/evidence-20261116-ci-ref/README.md`、`simulate.log`。
+
+## 2026-11-16 — /ngpu addon 恢复链静态验证
+
+- 目标：确认「userdata 重写后 addon 经 `/private/var/ngpu` 恢复、ADSP 从该目录加载」不是推断，而是源码上逐点闭合的链路；本轮只做静态核对。
+- 写入侧：`patches/xnu-ipados18/zzzzzzzzzzzzzzzzzz-diting-gpu-addon.patch`
+  - `:194-201` 创建缺失父目录，显式包含 `/private/var/ngpu` 本身（`sizeof("/private/var/ngpu")-1` 起逐级 mkdir）；
+  - `:292` 对每个 addon 成员执行 `snprintf(path, sizeof(path), "/private/var/ngpu/%s", name)`，因此成员 `firmware/adsp.mbn`
+    落在 `/private/var/ngpu/firmware/adsp.mbn`；`addons/*`/`daemons/*`/`wallpaper` 也各有对应 source/point（`:331-344`）。
+- 白名单侧：`drivers/DitingPower/DitingFirmware.c:11-12` `sheng_fw_open()` 只接受
+  `/diting/firmware/adsp.mbn` 与 `/private/var/ngpu/firmware/adsp.mbn`，其余 `EINVAL`；读取上限 64 MiB、分块 ≤1 MiB。
+- 加载侧：`drivers/DitingPower/DitingAdsp.cpp` `openFirmware()`：`base = directory ? directory : "/diting/firmware"`，
+  `snprintf(path, size, "%s/adsp.mbn", base)`（`:495`），失败按 `ENOENT/ENXIO/EIO` 重试 90×1 s；
+  `start()` 用 `PE_parse_boot_argn("diting_adsp-fw", dir, sizeof dir)` 取 base（`:512`），我们的 args 里是
+  `diting_adsp-fw=/private/var/ngpu/firmware`。
+- 输入侧：7 文件 addon（如 `735fbc6d9c11e96a0e43f93aa646cc59607b54dd4d88c491d940ffd8e06cbe83`）包含
+  `firmware/adsp.mbn` sha256 `d299d4136f478122b414d810a558dc7ad5c3bbf98592cd7b0d6280b6812a1e62`（23,380,392 B）；
+  `diting_addon-fw`/`diting_data_reserve=4` 等 args 在 addon26+ 与 addon30/31/32/33 候选里一致。
+- 结论：写入 → 白名单 → 加载三段在源码上闭合，`/ngpu` 恢复链是设计内路径；设备侧仍需观察的是启动时 addon 拷贝成功
+  （`written=0 same=…`）与 ADSP 加载推进到 ready（当前 blocker 仍是 ADSP stage 7 `0x30030=7` 超时 -60）。本轮无设备/CI。
