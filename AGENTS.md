@@ -1505,3 +1505,34 @@ work is the boot itself, not the inputs.
   （`fd2f4d1` 谱系），因此默认镜像行为不变，直到 addon30。回滚只需把 pin 改回 `fd2f4d1`（仍是祖先）。
 - 证据：`build-work/evidence-20261116-upstream-9931232/README.md`、`kernel-verify.json`、`merge.log`、
   `kernel-build-20261116T063237Z.log`、`status-defconfig.log`。本轮只改 provenance/文档，未上机、未派 CI。
+
+## 2026-11-16 — addon30：合并 core dev 121ea7f / PR #272 上的 GPU 重建
+
+- 来源：diting-ci `a856605` + core `dev 121ea7f`（upstream `9931232`，含 PR #272 `21d683d` runtime builds / graphics consumers）；
+  配对 kernel `0c1a2c1ff492f1e48a48ef66de692e7588b6a08c5f96de46757ed37958010147`（73,781,248 B，26 个 `__PRELINK_INFO`
+  entries 含 `com.apple.iokit.IOGPUFamily`，construct bytes `fd7bbfa9…21320094` 匹配）。
+- PR #272 对本 addon 的实际影响：`components.toml` 图组件 pin 更新（core 侧，不替换 vendored `drivers/DitingMetal` 管线）+
+  `patches/mesa/turnip-darwin-bo-finish-clears-under-lock.patch`（Darwin BO free：entry 在 `retire->lock` 内复制到栈 `gone`、
+  清零后再 `darwin_reap_locked`，避免 reaped BO 被复用后向 address 0 提交；3 hunks，+7 行偏移）。core 新增脚本无需移植到 diting-ci 管线。
+- Turnip（COW Mesa copy，按序应用 0016 `54b24385…`、0017 `acf17b79…`、core `76fc6000…`，均 LF 且反向校验）：
+  `libvulkan_freedreno.dylib` 17,882,280 B sha256
+  `6001cadb1b3b973d68f9a0ea3a30b1731e7d85026228f71b3b7317156ad982e9`（addon29 `eab147a8…`）；
+  `tu_knl_darwin.cc.o` 42,728→42,760 B，`tu_pipeline.cc.o` 不变。
+- Bridge：25,075,336 B sha256 `2a4ef86def330e6cb9e2162a1100bf16faf8d73c85de5a531fb3cfe4ea093bcf`（addon29 `582cca91…`）；
+  源码与 addon29 相同（`git log 05e9e48..a856605 -- drivers/DitingMetal` 为空，frontend object 逐字节相同 `af518fb9…`，
+  `llvm-nm` 符号表无差异），hash/size 差异是 Rust/linker 构建元数据。Plugin 逐字节同 addon29
+  `f624a7d5…`（116,960 B，`__DATA,__primelist` 728 B/10 行，`-sectcreate` 在）。
+- `addon30.gpuaddon` 24,370,904 B sha256 `47683afc62fb1666db41f254e4be2a6ec22fbcf46cc40d7a8309a39cfecb285a`
+  （7 文件：plugin `f624a7d5…`、bridge `2a4ef86d…`、Info.plist `c7bd65d7…`、turnip `6001cadb…`、publish、clients、
+  `firmware/adsp.mbn` `d299d413…`）。
+- 镜像：`D:\ai\diting\build-work\diting-addon30-diag.img` 101,187,584 B sha256
+  `a2158d7a025ff04f08d0a84eae9444b4d6bfdd76d0144603580a1c0f776f99e3`；args 52 tokens/999 chars
+  （`diting_gpu_trace=1 diting_gpu_pixels=1`、`log-gpu=1`、pwrkey pair，manifest==args、ADT==SHA-384）；
+  layout/kernel slot/PONGFAT1 CRC/contract/storage 全部 PASS；`hardware_tested=false`。
+- 工具链注意：当前 `xnu-linux-toolchain/env.sh` 的 `CCC_OVERRIDE_OPTIONS` 含 GCC 风格抑制
+  （`-Wno-error=unused-but-set-global`），host clang 17 以 `-Werror,-Wunknown-warning-option` 拒绝，因此 bridge/plugin 的
+  clang++ 构建需 unset 它（addon28/29 同样处理）；Turnip 的 meson 构建不受影响。
+- 预期/测试：UI 行为应与 addon29 一致，重点观察 PR #272 BO lock fix 后 address-0 提交/GPU 故障是否消失、`[gpu slow]`
+  的 fence/retire 尾延迟是否下降；RAM-only 冷滚 30 s → 热滚 30 s → 重启冷滚 30 s，并与 addon29 对照 T/PR/H/ctc/V/C。
+- 证据：`build-work/evidence-20261116-addon30/README.md`、`verification-addon30.json`、`addon30-report.json`、
+  `turnip-verify.txt`、`compare-details.txt`。本轮只记录，未上机、未派 CI。
