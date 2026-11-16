@@ -1705,3 +1705,28 @@ work is the boot itself, not the inputs.
 - 文档：`docs/STATUS.md` 当前设备表新增「证据通道」行（ramoops / Advanced Logger 菜单 / panic QR / USB CDC 不可用）
   并加证据路径；`docs/RECOVERY.md` 新增场景 F（拍照 → 解码 → 断电重进 fastboot + RootLayout 解读 + ramoops 提示）。
   本轮未上机、未派 CI。
+
+## 2026-11-16 — RPMh 完成判据修正（dev-only）+ addon35-rpmh-cred
+
+- 代码：diting-ci **dev** `5241607698016b41dc3b1e0a04970393dffd3842` “power: accept RPMh CMD_STATUS COMPL as completion (device-unverified)”
+  （`drivers/DitingPower/DitingPlatformResources.cpp` `rawVote`，+10/−3；**main 仍停在 `cb42ac0`，未含此改动**）。
+  逻辑：保留 `rd(0xd04) & irq` 快路径记 `via=irq`；新增 `(rd(b+0x3c) & 0x10100) == 0x10100`（CMD_STATUS ISSUED|COMPL，
+  alioth 设备记录 + `rpmh-rsc.c:283-290` 的 vendor 判据）记 `via=status`，不再要求 idle 回读；原 `(COMPL && idle)` 仍保留；
+  committed 行由 `vote %x=%u committed` 改为 `vote %x=%u committed via=%s`（前缀不变，timeout 诊断行不变）。
+- 动机（两条独立轨迹）：ADSP（addon18c 旧内核）stage 1–6 通过后 `failed stage=7 error=-60`，stage 7 = `StRails` 的 `vote(lcx,lmx)`
+  RPMh 超时（-60 = ETIMEDOUT）；WiFi（addon19）smpe3 enable 投票打印 `pre`/`caps=800c8104`/`cmd written tcs=1`/`triggered, polling`
+  后日志结束，无 `physical ready`、无 PCIe0、无失败行——命令已发出，但 IRQ 与 `COMPL&&idle` 都没在 poll 窗口触发。
+- 内核：core dev `121ea7f11afc3bbeb5d56336ab1550fba3ddf228` + dev `5241607` → `0911d97d1ca075a8f3bb342df941f69bf91e204425045187f86b80c300daaeff`
+  （73,781,248 B；26 个 `__PRELINK_INFO` entries 含 IOGPU；construct bytes `fd7bbfa9…21320094` 匹配；storage PASS；build rc 0）。
+- 镜像：`diting-addon35-rpmh-cred.img` 101,187,584 B sha256
+  `f7866bc3df6fcf463de1be4f73922bb36ae71fe3c8380b1878068015f3b70f06`（`build-work/evidence-20261116-rpmh-criterion/`）；
+  ADT 15,960 B `2d3de3d3…`（旧 binary-patch 路径，与 addon31-full 仅 boot-epoch/random-seed 不同）；manifest
+  `a289a85cb07724806060081f4d82e3ea428ee4b2041d0b6faf0b0ecf6285f573` 与 addon31-full 相同；CRC `0x78b0cbc2`；
+  addon `735fbc6d…`（7 文件）；args 52/999 相同；gates PASS（v4 layout/CRC、manifest==args、ADT==SHA-384、contract/storage、
+  独立 `check-loader-adt-contract.py` PASS）。A/B 与 addon31-full 的唯一变量是 kernel。
+- 设备计划（单变量、背靠背）：addon31-full（`67208eeb…`，kernel `0c1a2c1f…`）→ addon35（`f7866bc3…`，kernel `0911d97d…`）；
+  ADSP 看 `failed stage=7 error=-60` 是否消失并推进 stage 8+；WiFi 看 smpe3 `physical ready` 是否紧接 enable 投票；RPMh 行看 `via=irq`（旧路径）
+  或 `via=status`（新判据）；仍超时则回填 `timeout … st=… idle=… irq=…`。失败回退 dev `5241607`，fallback 一律 addon31-full。
+- 回滚：`git revert 5241607`（仅 dev）或直接用 addon31-full；main 不受影响。
+- 证据：`build-work/evidence-20261116-rpmh-criterion/README.md`、`rawvote.patch`、`kernel-verify.json`、`addon35-build.log`、
+  `addon35-ab-compare.json`、`commit.log`。本轮只记录，未上机、未派 CI。
