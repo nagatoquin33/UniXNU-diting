@@ -57,71 +57,70 @@ bool fail(const char *message) {
     IOLog("Diting resources: %s\n", message);
     return false;
 }
+bool wait(unsigned off, uint32_t mask, uint32_t value, unsigned ms) {
+    uint64_t end = now() + ms;
+    do {
+        if ((rd(off) & mask) == value) return true;
+        IOSleep(1);
+    } while (now() < end);
+    return false;
+}
 bool rawVote(uint32_t addr, uint32_t value) {
     IOLog("Diting resources: vote %x=%u pre\n", addr, value);
     voteFlush();
-    constexpr unsigned other = 0xd00 + 3 * 0x2a0;
+    /* zizhan PongRpmh.cpp rawVote: APSS DRV2 TCS4 shared by these clients, TCS3 leased by GPU. */
+    constexpr unsigned b = 0xd00 + 4 * 0x2a0, other = 0xd00 + 3 * 0x2a0;
     unsigned caps = rd(0xc), count = (caps >> 12) & 63, ncpt = (caps >> 27) & 31;
-    IOLog("Diting resources: vote %x caps=%x\n", addr, caps);
+    IOLog("Diting resources: vote %x caps=%x count=%u ncpt=%u\n", addr, caps, count, ncpt);
     voteFlush();
-    if (((rd(0) >> 16) & 255) >= 3 || count < 8 || ncpt < 1)
-        return fail("RPMh controller unavailable");
-    unsigned tcs = DITING_RPMH_SHARED_TCS;
-    if (rd(0xd00 + tcs * 0x2a0 + 0x1c) || !rd(0xd00 + tcs * 0x2a0 + 0x18)) {
-        static const unsigned kOrder[] = {2u, 0u};
-        tcs = 3;
-        for (unsigned cand : kOrder)
-            if (!rd(0xd00 + cand * 0x2a0 + 0x1c) && rd(0xd00 + cand * 0x2a0 + 0x18)) { tcs = cand; break; }
-        if (tcs >= 3) return fail("no idle active TCS");
-        IOLog("Diting resources: shared slot busy, using TCS%u\n", tcs);
-        voteFlush();
-    }
-    const unsigned b = 0xd00 + tcs * 0x2a0, irq = 1u << tcs;
-    if (unsigned armed = rd(b + 0x1c))
-        IOLog("Diting resources: TCS%u pre-armed mask=%x addr0=%x\n", tcs, armed, rd(b + 0x34));
+    if (((rd(0) >> 16) & 255) >= 3 || count < 8 || ncpt < 1 || !rd(b + 0x18))
+        return fail("active TCS4 unavailable");
     if (!rd(other + 0x18)) {
         unsigned mask = rd(other + 0x1c);
         for (unsigned i = 0; i < ncpt && i < 16; i++)
             if ((mask & (1u << i)) && rd(other + 0x34 + 20 * i) == addr)
                 return fail("conflicting RPMh transaction");
     }
-    wr(b + 0x14, rd(b + 0x14) & ~(1u << 24));
-    wr(b + 0x14, rd(b + 0x14) & ~(1u << 16));
-    wr(b + 0x1c, 0); wr(0xd08, irq);
-    wr(b + 0x30, 0x10108); wr(b + 0x34, addr); wr(b + 0x38, value);
-    IOLog("Diting resources: vote %x cmd written tcs=%u\n", addr, tcs);
+    wr(0xd00, rd(0xd00) & ~(1u << 4));
+    wr(b + 0x14, rd(b + 0x14) & ~((1u << 24) | (1u << 16)));
+    wr(b + 0x1c, 0);
+    wr(0xd08, 1u << 4);
+    IOLog("Diting resources: vote %x tcs=4 st=%x idle=%x\n", addr, rd(b + 0x3c), rd(b + 0x18));
     voteFlush();
-    wr(b + 0x10, 1); wr(b + 0x1c, 1);
-    wr(0xd00, rd(0xd00) | irq);
+    if (!wait(0xd04, 1u << 4, 0, 10)) return fail("TCS4 IRQ did not clear before the command");
+    wr(b + 0x30, 0x10108);
+    wr(b + 0x34, addr);
+    wr(b + 0x38, value);
+    IOLog("Diting resources: vote %x cmd written tcs=4 addr=%x value=%x\n", addr, addr, value);
+    voteFlush();
+    wr(b + 0x10, 1);
+    wr(b + 0x1c, 1);
     wr(b + 0x14, 1u << 16);
     wr(b + 0x14, (1u << 16) | (1u << 24));
     IOLog("Diting resources: vote %x triggered, polling\n", addr);
     voteFlush();
-    const char *via = nullptr;
-    bool done = false;
-    uint64_t end = now() + 200;
+    bool progressed = false, done = false;
+    uint64_t end = now() + 100;
     do {
-        if (rd(0xd04) & irq) { done = true; via = "irq"; break; }
-        // Vendor completion: CMD_STATUS bit8 ISSUED | bit16 COMPL (rpmh-rsc.c).
-        // The command may complete without the TCS IRQ and without the idle
-        // readback, which is the failure both ADSP stage 7 and WiFi smpe3 show;
-        // accept the status register as an extra proof, never as a replacement.
-        unsigned st = rd(b + 0x3c);
-        if ((st & 0x10100) == 0x10100) { done = true; via = "status"; break; }
-        if ((st & 0x10000) && rd(b + 0x18)) { done = true; via = "status"; break; }
+        unsigned st = rd(b + 0x3c), idle = rd(b + 0x18);
+        if ((st & 0x10100) != 0x10100 || !idle) progressed = true;
+        if ((st & 0x10100) == 0x10100 && idle && (progressed || (rd(0xd04) & (1u << 4)))) {
+            done = true;
+            break;
+        }
         IODelay(10);
     } while (now() < end);
-    wr(b + 0x14, rd(b + 0x14) & ~(1u << 24));
-    wr(b + 0x14, rd(b + 0x14) & ~(1u << 16));
-    wr(b + 0x1c, 0); wr(b + 0x10, 0); wr(0xd08, irq);
     if (!done) {
-        IOLog("Diting resources: timeout tcs=%u st=%x idle=%x irq=%x ctrl=%x en=%x msgid=%x caddr=%x cdata=%x\n",
-              tcs, rd(b + 0x3c), rd(b + 0x18), rd(0xd04), rd(b + 0x14), rd(b + 0x1c),
+        IOLog("Diting resources: timeout tcs=4 st=%x idle=%x irq=%x ctrl=%x en=%x msgid=%x caddr=%x cdata=%x\n",
+              rd(b + 0x3c), rd(b + 0x18), rd(0xd04), rd(b + 0x14), rd(b + 0x1c),
               rd(b + 0x30), rd(b + 0x34), rd(b + 0x38));
         voteFlush();
-        return fail("RPMh response timeout");
+        return fail("RPMh response timeout; transaction retained");
     }
-    IOLog("Diting resources: vote %x=%u committed via=%s\n", addr, value, via);
+    wr(b + 0x1c, 0);
+    wr(0xd08, 1u << 4);
+    wr(b + 0x14, rd(b + 0x14) & ~(1u << 24));
+    IOLog("Diting resources: vote %x=%u committed\n", addr, value);
     voteFlush();
     return true;
 }

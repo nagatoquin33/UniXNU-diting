@@ -65,8 +65,7 @@ kernel = "build/xnu/ios-obj/DEVELOPMENT_ARM64_DITING/mach.development.diting"
 # 0xfffffff00b000000。最终内核还需通过存储绑定落段检查。
 slide = "0x5ed0000"
 roots = ["com.apple.kec.corecrypto", "com.apple.kec.pthread", "com.apple.filesystems.apfs",
-         "com.apple.kec.Compression", "com.apple.AppleFSCompression.AppleFSCompressionTypeZlib",
-         "com.apple.iokit.IOGPUFamily"]
+         "com.apple.kec.Compression", "com.apple.AppleFSCompression.AppleFSCompressionTypeZlib"]
 
 [adt.root.string]
 model = "iPhone17,1"
