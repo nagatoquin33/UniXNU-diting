@@ -1431,3 +1431,25 @@ work is the boot itself, not the inputs.
   真机测试仍按冷滚 30 s → 热滚 30 s → 重启冷滚 30 s，异常回 addon28/addon27 对照。
 - 证据：`build-work/evidence-20261116-gpu-official/verification-addon29.json`、`build-image-addon29.log`、`verify-addon29.py`。
   本轮只改 args 并记录，未上机、未派 CI。
+
+## 2026-11-16 — 官方 ADT 候选与 A/B 对照（未合并）
+
+- 分支：diting-ci **`fix/adt-gen` @ `ed18043`**（已推 fork；含 `5b4df48` official-prelink + `7dc1e7f`/`1186469` dts/静态 `[adt.*]` 输入、
+  `d42b068` `[adt.arm-io]` 节点/UFS 属性、`ed18043` finalize `--official-adt` + release 透传 + contract 接受 64/256 seed）；
+  UniXNU fork **`feat/adt-arm-io` @ `8968f72`**（base `fd2f4d1`，`scripts/unixnu/devicetree.py` 29 行 `[adt.arm-io]`，仅 fork、无 upstream PR）；
+  共享 core checkout 已切回 `sync/upstream-20261116`（`fd2f4d1`）；`port/official-prelink` @ `5b4df48` 保留为 pre-ADT baseline。
+- A/B 对（同日/同 kernel/同 addon/同 cpus=1 与 args）：official-ADT 候选 `image-candidate-release-v4-cpus1.img`
+  101,187,584 B sha256 `9bf5ea504c1b445df662dad266e039fb5900ff7589f5abbe79e5eafecdcfca75`（ADT 15,352 B `4ac18849…`，
+  CRC `0xda0f09a9`）；旧 binary-patch 对照 `image-candidate-oldadt-release-v4-cpus1.img` 101,187,584 B sha256
+  `47e6b744b495a9671f636d6507d9ebe687bb8e58487238b808c175bad1bbb287`（ADT 14,112 B `cdc7b8cc…`，CRC `0x2f129509`）。
+  manifest 1,345 B `7695a248…`、kernel `ddccc812…`（prelink 26）、addon `8ea462a3…`（7 文件）、layout 在两者间一致；
+  gates contract/storage/single_core/layout PASS。两镜像仅 ADT 及其决定的 payload FAT/CRC 不同。
+- 接受的结构性差异（首轮设备测试前不改 generator）：root compatible 追加 DTS 串；intc 带 phandle/`#interrupt-cells`/base-relative reg；
+  ufshc 额外 reg/reg-names/interrupts（NativeUfs 仍读 diting,*）；`/cpus` 缺 `#address-cells`、cpu0 `cluster-type='E'`、无 `/psci`；
+  `/chosen/memory-map` 含 `GpuAddon`；allocatable-ram 240B（config 15 bank）；random-seed 256B（xnu-12377 需 4×64，旧内核读首 64；
+  contract 已接受 64/256）；`BNCH`/`boot-epoch`/`boot-manifest-hash`/`root-matching` 为每启动动态值（finalize 负责）。
+- 风险/门槛：default 仍是旧 binary-patch ADT；合并需候选镜像真机启动且无 AppleARMCPU/IOKit 匹配回归。
+  `build-work/evidence-20261116-adt-gen/merge-checklist.md` 记录合并顺序（先 core `feat/adt-arm-io` → diting-ci `fix/adt-gen` → 验证后切默认）、
+  post-merge 重建验证清单与回滚方案；`ab-compare.json` 保存 A/B 差异。
+- 证据：`build-work/evidence-20261116-adt-gen/README.md` §14–15、`ab-compare.json`、`merge-checklist.md`、`adt-final-result.json`。
+  本轮只记录，未上机、未合并、未派 CI；upstream 仓库只读、未推送。
