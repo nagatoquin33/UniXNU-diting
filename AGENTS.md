@@ -1453,3 +1453,22 @@ work is the boot itself, not the inputs.
   post-merge 重建验证清单与回滚方案；`ab-compare.json` 保存 A/B 差异。
 - 证据：`build-work/evidence-20261116-adt-gen/README.md` §14–15、`ab-compare.json`、`merge-checklist.md`、`adt-final-result.json`。
   本轮只记录，未上机、未合并、未派 CI；upstream 仓库只读、未推送。
+
+## 2026-11-16 — 分支策略：main + dev
+
+- 仓库（`nagatoquin33/UniXNU-diting`）只保留两条长期分支：`main` 稳定/已验证，`dev` 集成；功能分支短命，合并后删除。
+  完整规则见 `docs/ARCHITECTURE.md §6`。
+- 本次整理：
+  - `dev` 从 `main` `77904cf` 创建，合入 `fix/adt-gen` `ed18043`（其已含 `port/official-prelink` `5b4df48`）→ merge commit
+    `00bb154`；无冲突。`board.toml` 合并后同时保留 main 的打包字段（`[payload] loader`、`[payload.runtime] enabled=false`、
+    `[payload.adt] tool` 注释）与分支的 `[kernel.prelink] roots`（含 `com.apple.iokit.IOGPUFamily`）及 `[adt.arm-io]`
+    （`diting-touch`/`diting-buttons`/`ufshc`）；`finalize-diting-adt.py`/`build-release-image-linux.py`/`diting_adt_contract.py`/`dts/diting.dts`
+    取分支版本。`git diff main..dev` 仅上述 5 个文件（+213/−3）。
+  - 离线门禁：`py_compile` PASS；`porting-record.py check --device .` → “diting: 34 structured areas checked” PASS；
+    `diting_adt_contract.py --help` PASS；`tomllib` 解析 PASS。未上机、未派 CI（内核/镜像门禁沿用 `evidence-20261116-adt-gen` 记录）。
+  - 已推 `dev` → `00bb154b134e774e142bd8889d50562bcb72257f`；随后删除远端 `fix/adt-gen`（`ed18043`）、
+    `port/official-prelink`（`5b4df48`）、`no-stall`（`12a8596`）、`ci/systemos-union`（`9628bd4`）、
+    `ci/eacces-applog-fix`（`be630b9e`）；删除本地同名分支与 `port/official-prelink-rebased`（`5b4df48`，其 worktree
+    `/home/nagatoquin/unixnu/diting-rebase` 一并移除）。整理后远端/本地仅 `main` 与 `dev`，worktree 仅主检出。
+- 边界：`dev` 未合入 `main`；`main` 的 ADT 默认仍是旧 binary-patch 路径，`feat/adt-arm-io`（核心 fork `8968f72`）待设备
+  A/B 后再按 `build-work/evidence-20261116-adt-gen/merge-checklist.md` 合入。
