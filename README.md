@@ -9,7 +9,7 @@ Redmi K50 至尊版（`diting` / Qualcomm SM8475）的 UniXNU 格式 2 设备仓
   [驱动适配](https://unixnu.com/zh/porting/drivers)、[启动验证顺序](https://unixnu.com/zh/porting/bring-up)、
   [日志抓取](https://unixnu.com/zh/porting/log-capture)
 - 本设备：[格式 2 配置](migration/format2/README.zh.md)、[系统迁移](migration/ipados18/README.zh.md)、
-  [结构化移植记录](porting.toml)、[AGENTS.md](AGENTS.md)、[当前状态](docs/STATUS.md)、[来源说明](docs/PROVENANCE.md)
+  [结构化移植记录](porting.toml)、[AGENTS.md](AGENTS.md)、[当前状态](docs/STATUS.md)、[来源说明](docs/PROVENANCE.md)、[架构](docs/ARCHITECTURE.md)、[镜像清单](docs/IMAGES.md)
 
 ## 当前状态（2026-11-16）
 
