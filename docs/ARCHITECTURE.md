@@ -56,7 +56,7 @@
 ## 5. 上游同步
 
 - 参照检出：`/home/nagatoquin/unixnu/UniXNU-upstream`（detached，`origin/main`），只读；
-- 工作内核钉版：core `fd2f4d1`（`sync/upstream-20261116`；upstream `03129b6` + 本地保留提交 `00b8415`），见根目录 [`core-provenance.json`](../core-provenance.json)。升级需重做内核构建与 storage/porting 校验；首次干净构建前需清理 diting-ci 的 4 个过期 refer 软链（见该文件的 `prerequisite_refer_cleanup`）。
+- 工作内核钉版：**`fd2f4d1` 仍是已验证 pin**（upstream `03129b6` + 本地保留提交 `00b8415`；kernel exit 0、IOGPU `7ed899e5…`、storage/porting PASS）；核心 fork 现在只保留 `main` `377f0ff` 与 `dev` `97e6c92`（= `fd2f4d1` + `feat/adt-arm-io` `8968f72`），pin 是 `dev` 的祖先；旧 `sync/*` 与 feature 分支已归档/删除。升级 pin 需在对应分支上重做内核构建与 storage/porting 校验；首次干净构建前需清理 diting-ci 的 4 个过期 refer 软链（见 [`core-provenance.json`](../core-provenance.json) 的 `prerequisite_refer_cleanup`）。
 - 同步原则：先 fetch 阅读上游变更（文档、契约、组件），再决定是否 bump 钉版；不向上游推送。
 
 ## 6. 分支策略（2026-11-16 起）
@@ -78,7 +78,8 @@
 
 当前状态（2026-11-16 整理后）：
 
-- 远端与本地长期分支：`main` @ `77904cf`、`dev` @ `00bb154`（`dev` = main + `fix/adt-gen` 合入）。
-- `dev` 已包含 `fix/adt-gen`（`ed18043`，含 `port/official-prelink` `5b4df48`）与官方 ADT 路径改动；`feat/adt-arm-io`（核心 fork `8968f72`）尚待按 `merge-checklist.md` 在设备验证后并入。
+- diting-ci：`main` @ `1b83f44`（稳定）、`dev` @ `03cb8b7`（集成；= main + `fix/adt-gen` + 分支策略文档）。
+- 核心 fork（`nagatoquin33/UniXNU`）：`main` @ `377f0ff`、`dev` @ `97e6c92`（= `fd2f4d1` + `feat/adt-arm-io` `8968f72`）；旧 `sync/*` 与 feature 分支已归档/删除，验证 pin 仍为 `fd2f4d1`（`dev` 的祖先）。
+- `dev` 已包含 `fix/adt-gen`（`ed18043`，含 `port/official-prelink` `5b4df48`）与官方 ADT 路径改动；核心 `feat/adt-arm-io` 已合入核心 `dev`，尚待设备 A/B 后再按 `merge-checklist.md` 并入 diting-ci `main`。
 - 已删除的远端分支：`fix/adt-gen`、`port/official-prelink`、`no-stall`（`12a8596`，未包含在 dev）、`ci/systemos-union`（`9628bd4`，未包含在 dev）、`ci/eacces-applog-fix`（`be630b9e`，已在 dev 历史中）。删除前 heads 记录于 `AGENTS.md`。
 - `dev` 未合入 `main`；`main` 的默认 ADT 路径仍是旧 binary-patch，直到设备 A/B 验证通过。
