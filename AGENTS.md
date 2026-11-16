@@ -1536,3 +1536,17 @@ work is the boot itself, not the inputs.
   的 fence/retire 尾延迟是否下降；RAM-only 冷滚 30 s → 热滚 30 s → 重启冷滚 30 s，并与 addon29 对照 T/PR/H/ctc/V/C。
 - 证据：`build-work/evidence-20261116-addon30/README.md`、`verification-addon30.json`、`addon30-report.json`、
   `turnip-verify.txt`、`compare-details.txt`。本轮只记录，未上机、未派 CI。
+
+## 2026-11-16 — addon30 kernel marker audit
+
+- 对 addon30 内核做字符串审计：kernel `0c1a2c1ff492f1e48a48ef66de692e7588b6a08c5f96de46757ed37958010147`
+  （73,781,248 B）；审计文件 `build-work/evidence-20261116-addon30/kernel-marker-audit.txt`
+  1,421 B sha256 `119a6740777169c283929180a2d3014a2c7b6006f085aa991816e874336e7fc3`。
+- counts：`DitingWifi` 19、`diting_wifi` 10、`ath11k` 846、`MHI` 34、`QMI` 6、`PCIe` 62、`wcn6855` 38、
+  `mhi_ring` 17、`cmd written tcs` 1、`Diting touch` 11、`goodix` 44、`IOGPUFamily` 7、`SCANOUT` 1、
+  `diting_ramoops` 12、`Diting pwrkey` 4、`PSCI SYSTEM_OFF` 1（另有 `Diting keys` 9）。
+- 关键 WiFi 日志串（设备轮据此匹配）：`DitingWifi: PCIe0 ELBI=%x link=%x PHY=%x LTSSM=%x/%x clock=%x/%x collapse=%x …`、
+  `DitingWifi: training attempt=%u target=Gen%u …`、`DitingWifi: rail %s physical ready PPID=%x %umV status=%x enable=%x`、
+  `DitingWifi: SMMU program status=%u bank=%u phase=%u …`；另有 `ath11k start failed=%d`、`owned SMMU fault=%x …` 等失败路径串。
+- 用途：下一轮 RAM-only 启动 addon30 时用这些字符串判断 WiFi 供电/PCIe/SMMU/固件各阶段是否被执行，并与其他子系统
+  （touch/goodix、IOGPU/SCANOUT、ramoops、pwrkey/PSCI）markers 一同核对；本轮只记录，未上机、未派 CI。
