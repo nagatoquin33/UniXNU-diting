@@ -78,11 +78,11 @@
    ufshc 的 `reg/reg-names/interrupts` 是否被 NativeUfs 误用。通过后才按 `merge-checklist.md` 先 core `feat/adt-arm-io` → diting-ci `fix/adt-gen` → 切默认并删 binary-patch 路径。
 3. **Wi-Fi**：RPMh committed → 物理电源 → PCIe → SMMU/MSI → MHI/QMI → station/MAC → 系统设置扫描 →
    关联 → DHCP。仍超时时比较 TCS1 的触发控制、命令状态、idle 与 IRQ_STATUS。
-3. **电量 / ADSP**：越过 stage 7 → PAS → DSP ready → GLINK → `PMIC_RTR_ADSP_APPS` →
+4. **电量 / ADSP**：越过 stage 7 → PAS → DSP ready → GLINK → `PMIC_RTR_ADSP_APPS` →
    `DitingBattery: physical battery power source published` → 桌面状态栏与插拔跟随。
-4. **GPU 流畅度**：primelist 已内嵌；下一步补 shader-cache 持久化并回归 CP/fence、Vulkan 设备、
+5. **GPU 流畅度**：primelist 已内嵌；下一步补 shader-cache 持久化并回归 CP/fence、Vulkan 设备、
    实际 scanout 与提交完成；用帧间隔/`frame-enc`/`ctc` 统计判断改善。
-5. **触摸延迟**：release 内核纳入 touch-latency instrumentation，采集 THP 帧间隔与 IRQ 唤醒率后再调优。
+6. **触摸延迟**：release 内核纳入 touch-latency instrumentation，采集 THP 帧间隔与 IRQ 唤醒率后再调优。
 
 上机约束：只 `fastboot boot`（RAM-only），不写分区；使用 `D:\ai\diting\build-work` 最终镜像，启动前
 从最终镜像回读内核并逐字节比对。
