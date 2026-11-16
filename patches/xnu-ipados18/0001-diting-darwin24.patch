@@ -6949,7 +6949,7 @@ new file mode 100644
 index 0000000..9e2008c
 --- /dev/null
 +++ b/iokit/Kernel/MiniIOSurface.cpp
-@@ -0,0 +1,2323 @@
+@@ -0,0 +1,2360 @@
 +/*
 + * MiniIOSurface: a stand-in for Apple's closed IOSurface.kext (see MiniIOSurface.h).
 + *
@@ -7887,6 +7887,7 @@ index 0000000..9e2008c
 +
 +/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 +
++#if !XNU_PRELINKED_IOSURFACE
 +/* What a Mach send right for a surface points at. Holds the surface while any right exists. */
 +class IOSurfaceSendRight : public OSObject
 +{
@@ -9225,6 +9226,42 @@ index 0000000..9e2008c
 +	return ref ? kIOReturnSuccess : kIOReturnNotFound;
 +}
 +
++#else
++/* Apple's prelinked IOSurface.kext provides IOSurfaceRoot and
++ * IOSurfaceRootUserClient. Keep only the internal MiniIOSurface object and its
++ * locks; publishing our own root/user client would register a duplicate class. */
++bool
++MiniIOSurfaceStart(IOService * provider)
++{
++	gSurfaceLock = IOLockAlloc();
++	gSurfaceKeptLock = IOLockAlloc();
++	if (gSurfaceLock == NULL || gSurfaceKeptLock == NULL) {
++		IOLog("MiniIOSurface: no memory for surface locks\n");
++		return false;
++	}
++	if (!PE_parse_boot_arg_str("surftrace_of", gSurfaceTraceOf, sizeof(gSurfaceTraceOf))) {
++		gSurfaceTraceOf[0] = 0;
++	}
++	gSurfaceClearing = thread_call_allocate(surfaceMemoryClear, NULL);
++	if (gSurfaceClearing == NULL) {
++		IOLog("MiniIOSurface: cannot allocate the surface cleanup call\n");
++		return false;
++	}
++	(void) provider;
++	return true;
++}
++
++/* The legacy framebuffer GetLayerDefaultSurface path has no kernel send-right
++ * factory without our user client; clients create surfaces through Apple's
++ * IOSurfaceRootUserClient instead. */
++mach_port_name_t
++MiniIOSurfaceMakeSendRight(task_t task, MiniIOSurface * surface)
++{
++	(void) task;
++	(void) surface;
++	return 0;
++}
++#endif
 +/* The Metal frontend brackets actual submissions with authorized send
 + * rights. Reading starts only after those GPU jobs and cache acquisition
 + * completed; subsequent writers wait until the display finishes copying. */

@@ -1174,6 +1174,23 @@ if [ -d "$DITING_IOKIT_OBJ" ]; then
   printf '%s\n' "$DITING_BACKLIGHT" > "$DITING_IOKIT_OBJ/.diting-backlight-mode"
 fi
 EXTRA_MAKE_ARGS+=("MiniIOMobileFramebuffer.cpo_CFLAGS_ADD=-DXNU_DITING_BACKLIGHT=$DITING_BACKLIGHT")
+
+# When Apple's IOSurface.kext is prelinked (the IOGPUFamily root closure), our
+# IOSurfaceRootUserClient would register a duplicate OSMetaClass and panic at
+# OSMetaClass.cpp. The file keeps the internal MiniIOSurface object, but omits
+# the conflicting user client / root when this is 1.
+PRELINKED_IOSURFACE=${XNU_PRELINKED_IOSURFACE:-0}
+if [ "$PRELINKED_IOSURFACE" != 0 ] && [ "$PRELINKED_IOSURFACE" != 1 ]; then
+  echo 'XNU_PRELINKED_IOSURFACE must be 0 or 1' >&2
+  exit 1
+fi
+if [ -d "$DITING_IOKIT_OBJ" ]; then
+  if [ "$(cat "$DITING_IOKIT_OBJ/.diting-prelinked-iosurface" 2>/dev/null || echo unset)" != "$PRELINKED_IOSURFACE" ]; then
+    rm -f "$DITING_IOKIT_OBJ/MiniIOSurface.cpo"
+  fi
+  printf '%s\n' "$PRELINKED_IOSURFACE" > "$DITING_IOKIT_OBJ/.diting-prelinked-iosurface"
+fi
+EXTRA_MAKE_ARGS+=("MiniIOSurface.cpo_CFLAGS_ADD=-DXNU_PRELINKED_IOSURFACE=$PRELINKED_IOSURFACE")
 EXTRA_CFLAGS="$EXTRA_CFLAGS -DXNU_BOOT_PROGRESS=$BOOT_PROGRESS -DXNU_DITING_ADRENO_PLATFORM=$DITING_ADRENO_PLATFORM"
 # Darwin 24 consumes RC_NONARCH_CFLAGS through OTHER_CFLAGS in both CFLAGS
 # and SFLAGS. CFLAGS_EXTRA is not read by its makefiles: passing that name

@@ -28,6 +28,9 @@ CONFIG_XNU_NATIVE_OFFLINE_GPU=n
 CONFIG_XNU_NATIVE_PAN=y
 CONFIG_XNU_NATIVE_RAM_BLOCK=n
 CONFIG_XNU_NATIVE_TRUST_CACHE=n
+# The IOGPUFamily prelink root closure pulls Apple's IOSurface.kext, which owns
+# IOSurfaceRootUserClient and its traps; the MiniIOSurface user client is then omitted.
+CONFIG_XNU_PRELINKED_IOSURFACE=y
 CONFIG_XNU_NATIVE_UFS=y
 CONFIG_XNU_NATIVE_VIRTIO_BLOCK=n
 CONFIG_XNU_NATIVE_VIRTIO_CONSOLE=n
