@@ -1599,3 +1599,26 @@ work is the boot itself, not the inputs.
   详细 anchors 见 `build-work/evidence-20261116-wifi-stage/gating.md`；设备轮按 `WiFi worker armed stage=N` 与 `staged stop at N:` 判断停点。
 - 设备计划：rails（`=2`）先回答 smpe3 是否 physical ready → link（`=4`）看 PCIe0/training → full（`=1`）看 SMMU/MHI/QMI/ath11k/scan；
   异常回 addon30（`a2158d7a…`，同 kernel）对照。本轮只记录，未上机、未派 CI。
+
+## 2026-11-16 — addon32-touch：THP-on args 变体（单变量）
+
+- 从 addon31-full artifacts 只改 args：+`diting_touch_thp=1`、−`diting_exec_diag=1`，52 tokens/999 chars；
+  kernel `0c1a2c1ff492f1e48a48ef66de692e7588b6a08c5f96de46757ed37958010147`（26 IOGPU entries）、
+  addon `735fbc6d9c11e96a0e43f93aa646cc59607b54dd4d88c491d940ffd8e06cbe83`、plugin `f8cb839b…`（167 路径 primelist `0ca614ac…`）、
+  bridge `2a4ef86d…`、turnip `6001cadb…` 全部与 addon31-full 相同。
+- THP 语义（`patches/xnu-ipados18/zzzzzzzzzzzzzzzzz-diting-touch-geni-perf.patch:515-526`）：`use_thp` 默认 **0**（coordinate 路径）；
+  `diting_touch_thp=1`（别名 `diting-touch-thp`）置 1，且仅在 chip 报出有效 frame address、matrix ≥4×4 且 read 有界时进入 THP 并打印
+  `goodix: THP mode 1; matrix …`，否则同一分支打印 `goodix: coordinate mode active (thp_req=…)`，一次启动即可判定参数是否生效；
+  instrumented stats 每 255 报告输出 `Diting touch latency:`（interval_mean/max、read_mean/max）与 THP 的 `Diting touch THP latency:`（frames/polls）。
+- 预算：addon31-full 999 chars；+`diting_touch_thp=1`（含分隔符）→ **1018 B**，builder 以 `the kernel command line is 1018 bytes; the limit is 1000`
+  拒绝（board.toml:126，DarwinBoot 1024 B buffer）。去掉 board `kernel_args` 的 `diting_exec_diag=1`（19 B）→ 999 B；
+  由于 payload 只按名字过滤/追加 board args（`UniXNU/scripts/unixnu/payload.py:125-129`），用一个私有 device-input view
+  （除去掉该行的 `board.toml` 副本外全部 symlink 到 diting-ci，`--device` 传入；`make-device-view.py` 可重建）生成，共享 `board.toml` 未改、`git status` 干净。
+- 镜像：`diting-addon32-touch.img` 101,187,584 B sha256 `910a49654017e089acb7f3ca4ef640b86fb1fc35dfdd0e448b93cc4b95be4b13`；
+  gates 全 PASS：v4 layout、kernel slot、PONGFAT1 CRC、manifest==args、ADT==SHA-384、`check-loader-adt-contract.py` PASS、
+  storage-binding PASS、7 文件 addon（adsp `d299d413…`）、plugin/bridge/turnip 与 addon31 一致。`hardware_tested=false`。
+- 设备测试（单变量、背靠背）：先 `diting-addon31-full.img`（THP OFF）再 `diting-addon32-touch.img`（THP ON），各 30 s 滚动 + 30 s 多点触控；
+  对比 `goodix: THP mode 1` vs `coordinate mode active (thp_req=1)`、`Diting touch latency`（interval/read mean+max）、`Diting touch THP latency`（frames/polls）、
+  IRQ vs poll 计数与跟手度；THP 只有持平或更好才保留，回退 addon31-full（`67208eeb…`）。
+- 证据：`build-work/evidence-20261116-touch-thp/README.md`、`verification-addon32-touch.json`、`build-image-retry.log`（首次 1018 B 被拒见 `build-image.log`）。
+  本轮只记录，未上机、未派 CI。
