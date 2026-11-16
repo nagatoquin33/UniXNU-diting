@@ -50,7 +50,7 @@
 
 | 阻塞 | 现象 | 已确认 / 待确认 |
 | --- | --- | --- |
-| Wi-Fi | 首笔 smpe2 RPMh 投票 `0x40508=7` 在 PCIe 训练前超时，未扫描 | 活动 TCS 为 TCS0–2；下一候选内核改用 TCS1（`cmd written tcs=` 已编入），待上机确认 committed → PCIe |
+| Wi-Fi | 首笔 smpe2 RPMh 投票 `0x40508=7` 在 PCIe 训练前超时，未扫描 | 阶段分析（`evidence-20261116-wifi-stage/README.md` `095c9544…`）：addon18c（旧内核）止于 W1——「RPMh response timeout; transaction retained」→「rail vote hi failed」→ 优雅停止；addon19（TCS1 镜像 `102fd293…`）所有投票 `committed`，四条轨 physical ready（smpb10 1800mV/PPID `0x1b6`、smpc1 1900mV/`0x29b`、smpb12 1350mV/`0x1bc`、ldoe7 2800mV），随后 smpe3 电压 `43400=2200` committed、enable `43404=1` 停在「triggered, polling」（日志结束，无 PCIe0）→ 下一阻塞是 **smpe3 enable 完成**；`rpmh-tcs0` patch（`TCS(reg)=rsc+0xd00+reg`，替代 TCS4 sleep slot）已在当前 series 与 addon26+ 内核，首次 addon26/30 启动即测试 |
 | ADSP / 电量 | ADSP 到 stage 6，stage 7 `0x30030=7` 超时（-60） | 未到 PAS 加载与电池服务发布 |
 | UI 帧率 | 桌面可用但帧间隔不稳、卡顿 | Metal pipeline 编译未摊销（插件已内嵌 `__DATA,__primelist`）+ shader cache 不落盘；addon27 起 telemetry 增加 `V cache h/m/w/q/rf/wf/ev` 与 `V drv l/h/m/s/tr/mm/un`，并可开 `log-gpu=1` 的 `Diting Metal pass` 有界行；addon28 进一步用上游 Turnip 0016（shader-share）/0017（retired-BO sweep）重建，并新增 `diting_gpu_cache_dir` 与 `C cache dir=… shared=… writable=…` 行；addon30 在合并 core `121ea7f`（PR #272）上重建，Turnip `6001cadb…` 含 BO free under-lock fix（预期减少 address-0 提交与尾抖动），待上机与 addon29 对照 T/PR/H/ctc/V/C |
 | 关机 | 长按电源不能关机 | 内核无 poweroff 路径；下一候选内核含 PSCI SYSTEM_OFF 长按补丁（`Diting pwrkey … SYSTEM_OFF`） |
@@ -75,8 +75,10 @@
    再启 `image-candidate-oldadt-release-v4-cpus1.img`（`47e6b744…`，ADT `cdc7b8cc…`）作对照；两镜像除 ADT/payload CRC 外逐项相同。
    记录：无 AppleARMCPU panic/IOKit 匹配回归、桌面/触摸、`/cpus`（单 CPU、无 `/psci`、cpu0 `cluster-type`）、`/chosen/memory-map` 的 `GpuAddon` 区间、
    ufshc 的 `reg/reg-names/interrupts` 是否被 NativeUfs 误用。通过后才按 `merge-checklist.md` 先 core `feat/adt-arm-io` → diting-ci `fix/adt-gen` → 切默认并删 binary-patch 路径。
-3. **Wi-Fi**：RPMh committed → 物理电源 → PCIe → SMMU/MSI → MHI/QMI → station/MAC → 系统设置扫描 →
-   关联 → DHCP。仍超时时比较 TCS1 的触发控制、命令状态、idle 与 IRQ_STATUS。
+3. **Wi-Fi**：W1 判据 = 五条轨（smpb10/smpc1/smpb12/ldoe7/smpe3）全部 `cmd written tcs=1` → `committed` → `physical ready`；
+   任一 `RPMh response timeout`/`rail vote hi failed` 或 poll 无 `physical ready` 即停在 W1，保留最后 40 行与 `triggered, polling` 状态。
+   之后：PCIe0 `ELBI/link/PHY/LTSSM` → `training attempt=… target=Gen…` → SMMU/MSI → MHI/QMI → ath11k → station/MAC →
+   系统设置扫描 → 关联 → DHCP。仍超时时比较 TCS1 的触发控制、命令状态、idle 与 IRQ_STATUS。
 4. **电量 / ADSP**：越过 stage 7 → PAS → DSP ready → GLINK → `PMIC_RTR_ADSP_APPS` →
    `DitingBattery: physical battery power source published` → 桌面状态栏与插拔跟随。
 5. **GPU 流畅度**：primelist 已内嵌；下一步补 shader-cache 持久化并回归 CP/fence、Vulkan 设备、
