@@ -79,9 +79,9 @@ python3 scripts/decode-sheng-panic-qr.py panic-photo.jpg --json          # 或 -
 ```
 
 - QR 只含寄存器与被截断的 reason（`TRUNCATED=1`）；完整 console 仍需 ramoops（场景 E）。
-- 已知一次真实 panic（2026-11-16，用户屏拍离线解码）：UUID `218FDCCE-86F6-326F-9BC1-536380109D02`、
-  ELR `FFFFFE00075C3220`、FAR `FFFFFECF9BD00000`、REASON `UFS ROOT FAILURE: no userdata partition …`；
-  解码记录見 `build-work/evidence-20261116-panic-qr/`。
+- **外部样本**（2026-11-16 群聊屏拍，非 Diting 设备；仅用于验证解码器与 RootLayout 解读，**不是** Diting panic，
+  也不能当作我们 userdata/slot 的证据）：UUID `218FDCCE-86F6-326F-9BC1-536380109D02`、ELR `FFFFFE00075C3220`、
+  FAR `FFFFFECF9BD00000`、REASON `UFS ROOT FAILURE: no userdata partition …`；解码记录見 `build-work/evidence-20261116-panic-qr/`。
 - `no userdata partition` 来自 `drivers/NativeUfs/RootLayout.h`（GPT 解析段 `:139-142`）：GPT 头/表 CRC 已通过，
   只是没有名为 `userdata` 的 GPT 分区（或首尾 LBA 非法）⇒ **userdata 布局/内核预期不匹配**，不是读 UFS 失败；
   先核对镜像 sha、slot 与 kernel 几何（`manifest=`/`stage=` 诊断），再决定是否走场景 D/E。

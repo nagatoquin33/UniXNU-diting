@@ -16,6 +16,7 @@
 | 待上机候选 | `D:\ai\diting\build-work\diting-addon24-diag.img`（`54ed270b…`）、`diting-addon26-diag.img`（`ee7278b2…`）、`diting-addon27-diag.img`（`d0b0e1e1…`）、`diting-addon28-diag.img`（`8cdd951d…`）、`diting-addon29-diag.img`（`4fadc124…`）、`diting-addon30-diag.img`（`a2158d7a…`，合并 core `121ea7f`/PR #272 + Turnip BO lock fix；kernel marker audit `119a6740…`：DitingWifi 19 / ath11k 846 / MHI 34 / QMI 6 / PCIe 62 / wcn6855 38 / mhi_ring 17 / `cmd written tcs` 1 / Diting touch 11 / goodix 44 / IOGPUFamily 7 / SCANOUT 1 / diting_ramoops 12 / Diting pwrkey 4 / PSCI SYSTEM_OFF 1，设备轮按这些字符串匹配），静态检查 PASS，`hardware_tested=false`；`diting-addon31-rails.img`（`73767046933f825d0a93d939e5ce42c65bcc6c9e6091d75be2969d7c2247fb1e`，WiFi `diting_wifi=2`）、`diting-addon31-link.img`（`cb291a2d353995dfec3efe34741737b54e6c51bcf493bfe7d00e83876693cdef`，`diting_wifi=4`）、`diting-addon31-full.img`（`67208eeb8ef67fbe295956ed3607011fe9aa778ca90c3da5e40c78474d490d81`，full）、`diting-addon32-touch.img`（`910a4965…`，THP-on：−`diting_exec_diag=1` +`diting_touch_thp=1`）、`diting-addon33-primeoff.img`（`a67c894e…`，prime-off：−`diting_exec_diag=1` +`diting_gpu_prime=0`） |
 | ADT 官方路径候选 | `image-candidate-release-v4-cpus1.img`（`9bf5ea50…`；ADT `4ac18849…` 15,352 B，CRC `0xda0f09a9`）与旧 ADT 对照 `image-candidate-oldadt-release-v4-cpus1.img`（`47e6b744…`；ADT `cdc7b8cc…`，CRC `0x2f129509`）；两者 args/manifest/kernel `ddccc812…`/addon `8ea462a3…`/layout 一致，仅 ADT 与 payload FAT/CRC 不同；gates contract/storage/single-core PASS；**未合并为默认**，binary-patch 路径仍是默认 |
 | 分支状态 | diting-ci `main` @ `f853d0d` + `dev` @ `2d6d0c2`；核心 fork `main` @ `377f0ff` + `dev` @ `121ea7f`（= `fd2f4d1` + `feat/adt-arm-io` + upstream `9931232`）；旧 `sync/*` 与 feature 分支已归档/删除；`dev` 未合入 `main` |
+| 设备可见性 | 当前 **fastboot / adb 均不可见**（panic 后；先确认端口/按键与 slot，恢复见 `docs/RECOVERY.md` 场景 B/E） |
 | 代码备份 | `/home/nagatoquin/unixnu/backups/diting-ci-before-rpmh-slot-20261115` |
 
 ## 已实机证实
@@ -46,7 +47,8 @@
 - Turnip 重建 / addon28：`build-work/evidence-20261116-turnip/README.md`、`addon28-report.json`、`verification.json`
 - addon29 追踪变体：`build-work/evidence-20261116-gpu-official/verification-addon29.json`、`build-image-addon29.log`（产物逐字节与 addon28 相同，仅 args 不同）
 - ADT 官方路径候选/A-B：`build-work/evidence-20261116-adt-gen/README.md` §14–15、`ab-compare.json`、`merge-checklist.md`（合并门槛与回滚）
-- panic QR 通道：`build-work/evidence-20261116-panic-qr/README.md`、`record.json`；runbook `device-runs/2026-11-16-official/runbook.md` §5b
+- panic QR 通道（解码器）；解码记录来自**外部群聊样本**（仅验证解码器与 RootLayout 解读，不是 Diting panic）：
+  `build-work/evidence-20261116-panic-qr/README.md`、`record.json`、`synthetic-decode.json`
 - 仓库记录：`AGENTS.md` 的 2026-11-15/16 各条
 
 ## 当前阻塞（真机日志定位，非推断）
