@@ -232,6 +232,7 @@ pub struct NmbShaderCacheStats {
     pub rejected: u64,
     pub read_failures: u64,
     pub writes: u64,
+    pub writes_queued: u64,
     pub write_failures: u64,
     pub evictions: u64,
     pub driver_loads: u64,
@@ -249,7 +250,7 @@ pub extern "C" fn nmb_device_shader_cache_stats(device: *const NmbDevice, out: *
         let out = get_mut(out)?;
         let stats = get(device)?.0.shader_cache_statistics();
         *out = NmbShaderCacheStats {
-            hits: stats.hits, misses: stats.misses, rejected: stats.rejected,
+            hits: stats.hits, misses: stats.misses, rejected: stats.rejected, writes_queued: stats.writes_queued,
             read_failures: stats.read_failures, writes: stats.writes, write_failures: stats.write_failures, evictions: stats.evictions,
             driver_loads: stats.driver_loads, driver_hits: stats.driver_pipeline_hits, driver_misses: stats.driver_pipeline_misses,
             driver_saves: stats.driver_saves, driver_truncated: stats.driver_data_truncated,

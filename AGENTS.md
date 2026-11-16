@@ -1325,3 +1325,30 @@ work is the boot itself, not the inputs.
 - 证据：`build-work/ramoops-addon16*.bin`、`ramoops-addon17.bin`、`ramoops-addon18c.bin`；
   `build-work/evidence-20261115-gpu-framerate/`、`evidence-20261115-gpu-prime/`、`evidence-20261116-addon26/`、
   `evidence-20261116-pwrkey/`；`build-work/evidence-20261115-touch-lag/`。
+
+## 2026-11-16 — GPU 上游诊断移植与 addon27
+
+- 上游 `pong-adreno-metal` @ `418c550`（声称基线 `a0f0287`）与 `drivers/DitingMetal` 是分叉关系而非子集：
+  `NativeBridgeMetalFrontend.mm` 70 hunks / 5,471 行、`bridge/NativeMetalObjects.rs` 35 hunks / 1,515 行；
+  上游新诊断建立在 frames.trace（type 7/8/10/12）与 translator `0021…0024` 之上，fork 用自己的
+  `NativeGpuTrace.h` ABI 与 `frameEvent` 覆盖同类信息。
+- 已移植（`drivers/DitingMetal/**`，+36/−4）：`log-gpu=1` / `diting_gpu_log=1` → `SHENG_LOG_GPU=1`（否则 unset，`a0a34fa` 语义）；
+  `logGpuOn()` + 每 commit 一条有界 pass note（`Diting Metal pass: pid/commit/passes/draws/blits/kpx/ctc/finish`，≤1/250 ms，
+  `f46fc88` 概念）；`NmbShaderCacheStats.writes_queued`（bridge `.h`/`.rs`）；telemetry `V cache h/m/w/q/rf/wf/ev` 与新增
+  `V drv l/h/m/s/tr/mm/un`（`de38c6f` 的 "full shader cache counts"），直接回答 11-15 的 `wr0` 问题
+  （queued-but-unwritten vs write-failure；驱动记录层是否持久）。
+- 未移植/出范围：translator `0021–0024`（room-keeper 线程、pass ring、sample ring）与 19 个有意丢弃的上游文件
+  （HostMetalCommandServer/Offline*/Original*ABI/tools）；fork 已有等价的 per-pass 附件与 stage-summary 覆盖。
+  本轮只改诊断，不改渲染策略与 guest ABI。
+- 构建产物：`DitingMetalBridge.dylib` 25,078,768 B sha256 `3286ae6d73bea8b5ea8501525d7314c385167ea88bc441ffb4deb5abfd3c7921`；
+  `DitingAdrenoMetal` 116,824 B sha256 `3c38d92ec5bb5c83c0024975ca9701717d128694ca84622d481d9b9df8c59b62`，
+  `__DATA,__primelist` 728 B / 10 行（嵌入字节 == `diting-ui-metallibs.primelist`，build report 含 `-sectcreate`）；
+  `addon27.gpuaddon` 24,370,920 B sha256 `8ea462a30d7ebcb0070dbb401d2f23c4244db8018cf7b5f7bbd64fb4153a04a2`（7 文件，含 `adsp.mbn`）。
+- 镜像：`D:\ai\diting\build-work\diting-addon27-diag.img` 101,187,584 B sha256
+  `d0b0e1e13e9a5e4c155d8aeb0a6c6626a06038c244d5cd008163681f26ead710`；v4 布局 PASS，kernel = addon26 的
+  `20834d3c0770db2e6f2ad7238b3bcfd2cd1b4e2508dc01b766c08a0142a6b6e3`（73,773,056 B，`__PRELINK_INFO` 26 条含
+  `com.apple.iokit.IOGPUFamily`）不变（本轮只动 plugin/bridge）；args 50 token / 968 字符，含 `log-gpu=1` 与
+  `diting_pwrkey_log=1 diting_pwrkey_long=5000`，`manifest == args`、`ADT == SHA-384(manifest)`、contract PASS、storage PASS；
+  `hardware_tested=false`。
+- 证据：`build-work/evidence-20261116-gpu-upstream/README.md`、`addon27-report.json`、`verification.json`、`logs/bridge-build.log`、
+  `logs/plugin-build.log`。本轮未上机、未派 CI。

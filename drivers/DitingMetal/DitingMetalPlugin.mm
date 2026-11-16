@@ -156,6 +156,10 @@ static id openDevice(unsigned port)
      if(!sysctlbyname("kern.bootargs",args,&size,nullptr,0)) {
       if(strstr(args,"diting_gpu_trace=1")){setenv("SHENG_GPU_TRACE","1",1);setenv("SHENG_DIAG","1",1);}
       if(strstr(args,"diting_gpu_pixels=1"))setenv("SHENG_GPU_PIXELS","1",1);
+      /* Upstream pong-adreno-metal a0a34fa: log-gpu=1 enables the GPU stack's
+       * log lines (NSLog pass notes, pipeline journal); off without it. */
+      if(strstr(args,"log-gpu=1") || strstr(args,"diting_gpu_log=1"))setenv("SHENG_LOG_GPU","1",1);
+      else unsetenv("SHENG_LOG_GPU");
      }}
     setenv("TU_DEBUG","sysmem,nocb",1);
     // Diting implements NativeAdreno directly, not Sheng's AGX selector tunnel.

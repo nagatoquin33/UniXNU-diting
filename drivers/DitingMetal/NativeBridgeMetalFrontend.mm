@@ -95,6 +95,9 @@ static uint64_t nowUs() {return clock_gettime_nsec_np(CLOCK_UPTIME_RAW)/1000;}
 struct Timed {std::atomic<uint64_t> count{0},total{0},slowest{0};
  void add(uint64_t began){const uint64_t took=nowUs()-began;count++;total+=took;uint64_t seen=slowest.load();while(took>seen && !slowest.compare_exchange_weak(seen,took)){}}};
 static Timed gTimePipeline,gTimeLibrary,gTimeFunction,gTimeEncodeToCommit;
+// log-gpu=1 (the plugin sets SHENG_LOG_GPU from the boot line): the GPU stack's
+// pass notes. Off by default so the bounded slow-frame log stays the only wave.
+static bool logGpuOn() {static const bool on=getenv("SHENG_LOG_GPU")!=nullptr;return on;}
 static std::atomic<uint64_t> gHistFrameGpu[10],gHistOtherGpu[10],gHistFrameEncode[10];
 static void histAdd(std::atomic<uint64_t> *bins,uint64_t us) {unsigned b=0;const uint64_t ms=us/1000;while(b<9 && ms>=(1ull<<b))++b;bins[b]++;}
 extern "C" { __attribute__((weak)) volatile uint32_t native_prime_functions_resumed; }
@@ -1737,6 +1740,17 @@ static void completed(void *context) {
  const uint64_t finished=nowUs();
  static std::atomic<uint64_t> nextSlowLog{0};
  uint64_t next=nextSlowLog.load();
+ static std::atomic<uint64_t> nextPassLog{0};
+ /* What this commit encoded, when the GPU log is on: passes, draws, pixels and
+  * the commit-to-completion split, paced so a busy frame cannot flood the log. */
+ if(logGpuOn()) {
+  uint64_t passNext=nextPassLog.load();
+  if(finished>=passNext && nextPassLog.compare_exchange_strong(passNext,finished+250000))
+   NSLog(@"Diting Metal pass: pid=%d commit=%u passes=%u draws=%u blits=%u kpx=%llu ctc=%llu finish=%llu",
+    getpid(),commandBuffer.commitIndex,commandBuffer->encodedWork.passes,commandBuffer->encodedWork.draws,
+    commandBuffer->encodedWork.blits,(unsigned long long)(commandBuffer->encodedWork.pixels>>10),
+    (unsigned long long)(callbackBegan-commandBuffer.committedUs),(unsigned long long)(finished-callbackBegan));
+ }
  if(finished-commandBuffer.committedUs>=33000 && finished>=next &&
     nextSlowLog.compare_exchange_strong(next,finished+250000)) {
   NSLog(@"Diting Metal slow: pid=%d commit=%u scheduled_us=%lld callback_us=%llu finish_us=%llu passes=%u draws=%u pixels=%llu fg=%u bg=%u",
@@ -2541,8 +2555,21 @@ extern "C" size_t native_bridge_metal_telemetry(char *out,size_t size) {
  if(gDevice && nmb_device_work_stats(gDevice,work)) {
   row("V vkpipe n=%llu total=%llums max=%llums waited=%llums failed=%llu",
    (unsigned long long)work[0],ms(work[1]),ms(work[2]),ms(work[3]),(unsigned long long)work[4]);
-  row("V cache hit%llu miss%llu wr%llu | msg i%llu w%llu",(unsigned long long)work[7],(unsigned long long)work[8],(unsigned long long)work[9],(unsigned long long)work[5],
-   (unsigned long long)work[6]);
+  /* Upstream pong-adreno-metal de38c6f: the full shader-cache counts, not just
+   * hits/misses/writes: queued writes, failures, evictions and the driver
+   * pipeline cache layer, which decide whether a warm boot is possible. */
+  struct NmbShaderCacheStats sc={};
+  if(nmb_device_shader_cache_stats(gDevice,&sc)) {
+   row("V cache h%llu m%llu w%llu q%llu rf%llu wf%llu ev%llu",(unsigned long long)sc.hits,(unsigned long long)sc.misses,
+    (unsigned long long)sc.writes,(unsigned long long)sc.writes_queued,(unsigned long long)sc.read_failures,
+    (unsigned long long)sc.write_failures,(unsigned long long)sc.evictions);
+   row("V drv l%llu h%llu m%llu s%llu tr%llu mm%llu un%llu",(unsigned long long)sc.driver_loads,(unsigned long long)sc.driver_hits,
+    (unsigned long long)sc.driver_misses,(unsigned long long)sc.driver_saves,(unsigned long long)sc.driver_truncated,
+    (unsigned long long)sc.driver_mismatched,(unsigned long long)sc.driver_unchanged);
+  } else {
+   row("V cache hit%llu miss%llu wr%llu | msg i%llu w%llu",(unsigned long long)work[7],(unsigned long long)work[8],(unsigned long long)work[9],(unsigned long long)work[5],
+    (unsigned long long)work[6]);
+  }
   char warning[200];size_t n=nmb_last_warning(warning,sizeof warning);
   if(n){row("W %.86s",warning);if(n>86)row("Wb %.86s",warning+86);}
  }

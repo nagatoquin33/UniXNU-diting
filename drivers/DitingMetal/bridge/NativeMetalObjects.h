@@ -39,7 +39,7 @@ bool nmb_device_work_stats(const NmbDevice *, uint64_t out[10]);
 size_t nmb_device_release_kept_memory(const NmbDevice *);
 /* Artifact lookups and driver pipeline records are separate cache layers. */
 struct NmbShaderCacheStats {
-    uint64_t hits, misses, rejected, read_failures, writes, write_failures, evictions;
+    uint64_t hits, misses, rejected, read_failures, writes, writes_queued, write_failures, evictions;
     uint64_t driver_loads, driver_hits, driver_misses, driver_saves, driver_truncated, driver_mismatched, driver_unchanged;
 };
 bool nmb_device_shader_cache_stats(const NmbDevice *, struct NmbShaderCacheStats *);
