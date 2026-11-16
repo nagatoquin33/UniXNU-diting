@@ -97,11 +97,18 @@ bool rawVote(uint32_t addr, uint32_t value) {
     wr(b + 0x14, (1u << 16) | (1u << 24));
     IOLog("Diting resources: vote %x triggered, polling\n", addr);
     voteFlush();
+    const char *via = nullptr;
     bool done = false;
     uint64_t end = now() + 200;
     do {
-        if (rd(0xd04) & irq) { done = true; break; }
-        if ((rd(b + 0x3c) & 0x10000) && rd(b + 0x18)) { done = true; break; }
+        if (rd(0xd04) & irq) { done = true; via = "irq"; break; }
+        // Vendor completion: CMD_STATUS bit8 ISSUED | bit16 COMPL (rpmh-rsc.c).
+        // The command may complete without the TCS IRQ and without the idle
+        // readback, which is the failure both ADSP stage 7 and WiFi smpe3 show;
+        // accept the status register as an extra proof, never as a replacement.
+        unsigned st = rd(b + 0x3c);
+        if ((st & 0x10100) == 0x10100) { done = true; via = "status"; break; }
+        if ((st & 0x10000) && rd(b + 0x18)) { done = true; via = "status"; break; }
         IODelay(10);
     } while (now() < end);
     wr(b + 0x14, rd(b + 0x14) & ~(1u << 24));
@@ -114,7 +121,7 @@ bool rawVote(uint32_t addr, uint32_t value) {
         voteFlush();
         return fail("RPMh response timeout");
     }
-    IOLog("Diting resources: vote %x=%u committed\n", addr, value);
+    IOLog("Diting resources: vote %x=%u committed via=%s\n", addr, value, via);
     voteFlush();
     return true;
 }
