@@ -3,6 +3,8 @@
 #define DITING_PLATFORM_RESOURCES_H
 #include <stdbool.h>
 #include <stdint.h>
+/* Diting 原厂设备树的活动槽 0–2。触控使用 0，Wi-Fi 与 ADSP 共享 1。 */
+enum { DITING_RPMH_SHARED_TCS = 1 };
 #ifdef __cplusplus
 extern "C" {
 #endif

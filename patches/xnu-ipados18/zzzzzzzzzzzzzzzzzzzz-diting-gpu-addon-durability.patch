@@ -1,0 +1,147 @@
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -7839,49 +7839,79 @@
+ 	return equal;
+ }
+ static int
+-native_gpu_addon_write(const char *path, const uint8_t *data, uint64_t size, uint32_t mode, vfs_context_t ctx)
++native_gpu_addon_write(proc_t p, user_addr_t scratch, const char *path, const uint8_t *data, uint64_t size,
++    uint32_t mode, vfs_context_t ctx)
+ {
+ 	vnode_t vp = NULLVP;
+ 	int error = vnode_open(path, FREAD | O_NOFOLLOW, 0, 0, &vp, ctx);
+-	printf("DITING GPUADDON: w open-ro ret=%d\n", error);
+ 	if (!error) {
+ 		int equal = native_gpu_addon_equal(vp, data, size, mode, ctx);
+-		vnode_close(vp, FREAD, ctx);
+-		vp = NULLVP;
+-		printf("DITING GPUADDON: w equal=%d\n", equal);
+-		if (equal) {
+-			return -1;
+-		}
+-	}
+-	error = vnode_open(path, O_CREAT | O_TRUNC | FWRITE | O_NOFOLLOW, mode, 0, &vp, ctx);
+-	printf("DITING GPUADDON: w open-rw ret=%d\n", error);
++		error = vnode_close(vp, FREAD, ctx);
++		if (error || equal) {
++			return error ? error : -1;
++		}
++	} else if (error != ENOENT) {
++		return error;
++	}
++
++	/* 先写同目录的临时文件。写入或同步失败时，目标文件仍然可用。 */
++	char temporary[224];
++	int length = snprintf(temporary, sizeof(temporary), "%s.diting-stage", path);
++	if (length < 0 || (size_t)length >= sizeof(temporary)) {
++		return ENAMETOOLONG;
++	}
++	struct rename_args replace = {.from = scratch + 0xc00, .to = scratch + 0xd00};
++	error = copyout(temporary, replace.from, (size_t)length + 1);
++	if (!error) {
++		error = copyout(path, replace.to, strlen(path) + 1);
++	}
+ 	if (error) {
+ 		return error;
+ 	}
+-	int resid = 0;
+-	error = vn_rdwr(UIO_WRITE, vp, (caddr_t)(uintptr_t)data, (int)size, 0, UIO_SYSSPACE, IO_NOAUTH | IO_UNIT, vfs_context_ucred(ctx),
+-	    &resid, vfs_context_proc(ctx));
+-	printf("DITING GPUADDON: w rdwr ret=%d resid=%d\n", error, resid);
+-	if (!error && resid) {
+-		error = EIO;
++
++	vp = NULLVP;
++	error = vnode_open(temporary, O_CREAT | O_TRUNC | FWRITE | O_NOFOLLOW, mode, 0, &vp, ctx);
++	if (error) {
++		return error;
++	}
++
++	const uint64_t chunk = 1024 * 1024;
++	uint64_t at = 0;
++	for (; !error && at < size; at += chunk) {
++		int count = (int)MIN(chunk, size - at);
++		int resid = 0;
++		error = vn_rdwr(UIO_WRITE, vp, (caddr_t)(uintptr_t)(data + at), count, (off_t)at,
++		    UIO_SYSSPACE, IO_NOAUTH | IO_SYNC, vfs_context_ucred(ctx), &resid, p);
++		if (!error && resid) {
++			error = EIO;
++		}
++		if (error) {
++			printf("DITING GPUADDON: write offset=%llu error=%d resid=%d\n", at, error, resid);
++		}
+ 	}
+ 	if (!error) {
+ 		struct vnode_attr va;
+ 		VATTR_INIT(&va);
+ 		VATTR_SET(&va, va_mode, mode);
+-		/* Kernel vnode_open does not finish O_TRUNC on the non-compound path. */
+ 		VATTR_SET(&va, va_data_size, size);
+ 		error = vnode_setattr(vp, &va, ctx);
+-		printf("DITING GPUADDON: w setattr ret=%d\n", error);
+-	}
+-	/* Diagnostic: Diting's NativeUfs commit path dies inside VNOP_FSYNC on the
+-	 * ~43 MB cumulative write point (deterministic at addon file 3). Skip the
+-	 * sync entirely for now — same-boot union mounts read back through the
+-	 * page cache anyway; durability revisited once the flush path is fixed. */
+-	printf("DITING GPUADDON: w fsync skipped\n");
++	}
++	if (!error) {
++		error = VNOP_FSYNC(vp, MNT_WAIT, ctx);
++	}
+ 	int close_error = vnode_close(vp, FWRITE, ctx);
+-	printf("DITING GPUADDON: w close ret=%d\n", close_error);
+-	return error ? error : close_error;
++	if (!error) {
++		error = close_error;
++	}
++	int32_t result = 0;
++	if (!error) {
++		error = rename(p, &replace, &result);
++	}
++	if (error) {
++		struct unlink_args discard = {.path = replace.from};
++		(void)unlink(p, &discard, &result);
++	}
++	return error;
+ }
+ /* Creates the missing parent directories of an addon path with the mkdir syscall, /private/var/ngpu itself included (a Data seed
+  * that never had add-gpu-plugin-data.py applied has none). The scratch is one 4 KiB page; the mount arguments end below 0xa00. */
+@@ -7988,10 +8018,10 @@
+ 		int error = data ? native_gpu_addon_inflate(addon + at, packed, data, size) : ENOMEM;
+ 		printf("DITING GPUADDON: inflate ret=%d\n", error);
+ 		if (!error) {
+-			error = native_gpu_addon_write(path, data, size, mode, ctx);
++			error = native_gpu_addon_write(p, scratch, path, data, size, mode, ctx);
+ 			printf("DITING GPUADDON: write ret=%d\n", error);
+ 			if (error == ENOENT && !(error = native_gpu_addon_parents(p, scratch, path))) {
+-				error = native_gpu_addon_write(path, data, size, mode, ctx);
++				error = native_gpu_addon_write(p, scratch, path, data, size, mode, ctx);
+ 			}
+ 		}
+ 		if (data) {
+@@ -8020,6 +8050,24 @@
+ 	printf("DITING GPUADDON: install done files=%d written=%d same=%d failed=%d error=%d\n",
+ 	    native_gpu_addon_files, native_gpu_addon_written, native_gpu_addon_same,
+ 	    native_gpu_addon_failed, native_gpu_addon_error);
++	if (native_gpu_addon_error) {
++		return;
++	}
++	if (native_gpu_addon_written) {
++		/* 同步 Data 卷，确保新目录和重命名已经提交，再把内容挂进系统。 */
++		vfs_context_t ctx = vfs_context_current();
++		vnode_t data_root = NULLVP;
++		int error = vnode_lookup("/private/var", 0, &data_root, ctx);
++		if (!error) {
++			error = VFS_SYNC(vnode_mount(data_root), MNT_WAIT, ctx);
++			vnode_put(data_root);
++		}
++		printf("DITING GPUADDON: Data sync ret=%d\n", error);
++		if (error) {
++			native_gpu_addon_error = error;
++			return;
++		}
++	}
+ 	static const char extensions_source[] = "/private/var/ngpu/addons", extensions_point[] = "/System/Library/Extensions";
+ 	static const char daemons_source[] = "/private/var/ngpu/daemons", daemons_point[] = "/System/Library/LaunchDaemons";
+ 	printf("DITING GPUADDON: mount ext\n");

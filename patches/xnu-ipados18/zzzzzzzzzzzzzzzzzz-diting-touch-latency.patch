@@ -1,0 +1,88 @@
+--- a/bsd/dev/diting_goodix.c
++++ b/bsd/dev/diting_goodix.c
+@@ -1347,6 +1347,12 @@
+ static uint8_t thp_used[THP_NODES_MAX];
+ static uint8_t thp_fbuf[GOODIX_MAX_READ];
+ static uint32_t thp_thr = 200, thp_map, thp_frames;
++/* Instrumentation only: cadence and cost of each stage, no policy change. */
++static uint64_t thp_last_frame, thp_interval_total, thp_interval_max;
++static uint64_t thp_proc_total, thp_proc_max;
++static uint32_t thp_interval_count, thp_polls;
++static uint64_t coord_last_report, coord_interval_total, coord_interval_max;
++static uint32_t coord_interval_count, coord_polls;
+ static struct {
+ 	bool active;
+ 	uint32_t x, y;
+@@ -1541,6 +1547,7 @@
+     const uint64_t irq_stamp=__atomic_exchange_n(&touch_irq_time,0,__ATOMIC_ACQ_REL);
+     touch_frame_time=irq_stamp?irq_stamp:mach_absolute_time();
+ 	seen.polls++;
++	++coord_polls;
+ 	if (!goodix_read(touch_address, report, first) || report[0] == 0) {
+ 		return;
+ 	}
+@@ -1577,10 +1584,16 @@
+ 		return;
+ 	}
+ 	goodix_report(report + 8, count);
+-    uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time()-touch_frame_time,&ns);
++    const uint64_t now=mach_absolute_time();
++    if(coord_last_report){uint64_t ins=0;absolutetime_to_nanoseconds(now-coord_last_report,&ins);
++        const uint64_t ius=ins/1000;coord_interval_total+=ius;++coord_interval_count;
++        if(ius>coord_interval_max)coord_interval_max=ius;}
++    coord_last_report=now;
++    uint64_t ns=0;absolutetime_to_nanoseconds(now-touch_frame_time,&ns);
+     const uint64_t us=ns/1000;touch_latency_total+=us;if(us>touch_latency_max)touch_latency_max=us;
+-    if(!(++touch_latency_count&255u))printf("Diting touch latency: reports=%u irq=%u spurious=%u read_mean_us=%llu read_max_us=%llu IRQ=%u spi=%s/%u\n",
+-        touch_latency_count,touch_irqs,touch_spurious,touch_latency_total/touch_latency_count,touch_latency_max,touch_irq_armed,spi_transport_name,geni_actual_hz);
++    if(!(++touch_latency_count&255u))printf("Diting touch latency: reports=%u irq=%u spurious=%u polls=%u read_mean_us=%llu read_max_us=%llu interval_mean_us=%llu interval_max_us=%llu IRQ=%u spi=%s/%u\n",
++        touch_latency_count,touch_irqs,touch_spurious,coord_polls,touch_latency_total/touch_latency_count,touch_latency_max,
++        coord_interval_count?coord_interval_total/coord_interval_count:0,coord_interval_max,touch_irq_armed,spi_transport_name,geni_actual_hz);
+ }
+ 
+ 
+@@ -1697,20 +1710,40 @@
+             const uint64_t irq_stamp = __atomic_exchange_n(&touch_irq_time, 0, __ATOMIC_ACQ_REL);
+             const uint64_t t0 = mach_absolute_time();
+             touch_frame_time = irq_stamp ? irq_stamp : t0;
++            ++thp_polls;
+             int fr = thp_frame();
+             if (fr > 0) {
++                const uint64_t t1 = mach_absolute_time();
+                 uint64_t ns = 0;
+-                absolutetime_to_nanoseconds(mach_absolute_time() - t0, &ns);
++                absolutetime_to_nanoseconds(t1 - t0, &ns);
+                 const uint64_t us = ns / 1000;
+                 touch_latency_total += us;
+                 if (us > touch_latency_max) touch_latency_max = us;
++                if (thp_last_frame) {
++                    uint64_t ins = 0;
++                    absolutetime_to_nanoseconds(t1 - thp_last_frame, &ins);
++                    const uint64_t ius = ins / 1000;
++                    thp_interval_total += ius;
++                    ++thp_interval_count;
++                    if (ius > thp_interval_max) thp_interval_max = ius;
++                }
++                thp_last_frame = t1;
+                 if (!(++touch_latency_count & 255u)) {
+-                    printf("Diting touch THP latency: frames=%u irq=%u read_mean_us=%llu read_max_us=%llu spi=%s/%u\n",
+-                        thp_frames, touch_irqs, touch_latency_total / touch_latency_count,
+-                        touch_latency_max, spi_transport_name, geni_actual_hz);
++                    printf("Diting touch THP latency: frames=%u irq=%u polls=%u read_mean_us=%llu read_max_us=%llu interval_mean_us=%llu interval_max_us=%llu proc_mean_us=%llu proc_max_us=%llu spi=%s/%u\n",
++                        thp_frames, touch_irqs, thp_polls, touch_latency_total / touch_latency_count,
++                        touch_latency_max,
++                        thp_interval_count ? thp_interval_total / thp_interval_count : 0, thp_interval_max,
++                        touch_latency_count ? thp_proc_total / touch_latency_count : 0, thp_proc_max,
++                        spi_transport_name, geni_actual_hz);
+                 }
+                 thp_wait = 0;
++                const uint64_t t2 = mach_absolute_time();
+                 thp_process();
++                uint64_t pns = 0;
++                absolutetime_to_nanoseconds(mach_absolute_time() - t2, &pns);
++                const uint64_t pus = pns / 1000;
++                thp_proc_total += pus;
++                if (pus > thp_proc_max) thp_proc_max = pus;
+             } else if (fr < 0) {
+                 printf("goodix: THP frame read failed; coordinate mode restored\n");
+                 const uint8_t coord = 0;

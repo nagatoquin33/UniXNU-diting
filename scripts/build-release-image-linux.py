@@ -1,14 +1,5 @@
 #!/usr/bin/env python3
-"""DEPRECATED — Build the Diting RELEASE Android-boot-v4 image on Linux, without macOS hdiutil.
-
-Nothing in the build chain calls this script. The release image path it wraps
-now lives in .github/workflows/package.yml: `unixnu release` prelinks through
-the core XnuPrelink kit (board.toml [kernel.prelink]), then
-scripts/finalize-diting-adt.py and scripts/build-bootimg.py assemble the v4
-container. Its --prelink-kernel option still imports the retained
-kits/NativePrelink because the library-only component policy
-(emit(library_only_components=...), plan(verify_images=False)) never moved
-upstream; keep it only as a reference for that retired path.
+"""Build the Diting RELEASE Android-boot-v4 image on Linux, without macOS hdiutil.
 
 Why this script exists
 ----------------------
@@ -55,6 +46,7 @@ UniXNU checkout and the release kernel derive from board.toml, and the artifact
 directory defaults to <cwd>/release-image.
 """
 import argparse
+import gzip
 import hashlib
 import json
 import os
@@ -75,6 +67,14 @@ MAGIC = b'PONGFAT1'
 ENVELOPE_HEADER = 4096
 DEFAULT_ARGS = ('diting_usb=0', 'diting_wifi=1', 'diting_adreno_start=1',
                 'diting_metal=1', 'diting_ui_software=0', 'diting_software_ui=0')
+# User policy 2026-11-15: every image/boot carries diagnostics by default.
+# These are appended before --arg (so an explicit --arg still wins) and are on
+# unless --no-diagnostics is passed. diting_ufs_stall=0 keeps a UFS failure
+# from parking the CPU before the ramoops/UFS log can be read.
+DIAGNOSTIC_ARGS = ('diting_usb=1', 'diting_ufslog=1', 'diting_ramoops_ufs=1',
+                   'diting_data_reserve=4',
+                   'diting_adsp-fw=/private/var/ngpu/firmware',
+                   'diting_ufs_stall=0')
 # The library-only policy scripts/build-ipados18-prelinked-boot.py:36-45 uses for
 # this board: base library components, plus the IOGPU closure when Adreno runs.
 BASE_LIBRARY = {'com.apple.driver.AppleARMWatchdogTimer', 'com.apple.driver.AppleARMPlatform',
@@ -293,6 +293,30 @@ def main():
                              '(or DITING_VOLUME_LAYOUT)')
     parser.add_argument('--output-dir', type=Path, default=Path.cwd() / 'release-image',
                         help='artifact directory (default: <cwd>/release-image)')
+    parser.add_argument('--diagnostics', action=argparse.BooleanOptionalAction, default=True,
+                        help='diagnostic defaults ON (2026-11-15 policy): diting_usb=1, '
+                             'diting_ufslog=1, diting_ramoops_ufs=1, diting_data_reserve=4, '
+                             'diting_adsp-fw=/private/var/ngpu/firmware, diting_ufs_stall=0; '
+                             'diagnostic images require --gpu-addon (--no-diagnostics for a control)')
+    parser.add_argument('--gpu-addon', type=Path,
+                        help='7-file NGPUADD2 GPU/ADSP addon (must contain firmware/adsp.mbn); '
+                             'copied into the payload and mirrored by the gpu-addon=1 argument')
+    parser.add_argument('--dtb', type=Path,
+                        help='device tree to append to the kernel slot and generate the ADT from '
+                             '(default: the DTB carried by the B1 image)')
+    parser.add_argument('--inject-gpu-addon', action='store_true',
+                        help='copy --gpu-addon into Payloads/kernel.macho.gpuaddon with mtools after the '
+                             'payload step instead of passing it to unixnu (the 0.95 payload-size guard '
+                             'rejects the addon18-sized kernel+addon stage; the FAT image still fits)')
+    parser.add_argument('--payload-allow-no-data-seed', action='store_true',
+                        help='payload step only: clear CONFIG_XNU_OWNER_DATA_MOUNT in the generated '
+                             '.config so the owner-Data seed requirement does not reject a prebuilt '
+                             'kernel payload (Data comes from diting_data_reserve at boot; the '
+                             'kernel itself is not rebuilt)')
+    parser.add_argument('--local-config', type=Path,
+                        help='local input TOML handed to unixnu (default: the core unixnu.local.toml). '
+                             'Pass an empty TOML to keep machine/sheng defaults (trust cache, seed, '
+                             'data ramdisk) out of the release payload')
     parser.add_argument('--cpus', default='8,1', help='comma separated CPU counts to build')
     parser.add_argument('--arg', action='append', default=[], metavar='NAME=VALUE',
                         help='extra/replacement boot argument for every variant')
@@ -325,6 +349,23 @@ def main():
 
     device = args.device.resolve()
     board = tomllib.loads((device / 'board.toml').read_text())
+    if args.gpu_addon is not None:
+        args.gpu_addon = args.gpu_addon.expanduser().resolve()
+        if not args.gpu_addon.is_file():
+            parser.error(f'--gpu-addon: {args.gpu_addon} is not a file')
+        if args.gpu_addon.read_bytes()[:8] != b'NGPUADD2':
+            parser.error(f'--gpu-addon: {args.gpu_addon} is not an NGPUADD2 addon')
+    if args.diagnostics and args.gpu_addon is None:
+        parser.error('--diagnostics (default since 2026-11-15) needs the 7-file GPU/ADSP addon: '
+                     'pass --gpu-addon FILE, or --no-diagnostics for a control image')
+    if args.dtb is not None:
+        args.dtb = args.dtb.expanduser().resolve()
+        if not args.dtb.is_file():
+            parser.error(f'--dtb: {args.dtb} is not a file')
+    if args.local_config is not None:
+        args.local_config = args.local_config.expanduser().resolve()
+        if not args.local_config.is_file():
+            parser.error(f'--local-config: {args.local_config} is not a file')
     core = (args.core or (device / board['package']['unixnu'])).resolve()
     os_profile = board['board']['os_profile']
     config_name = board['package']['defconfig'][os_profile]
@@ -340,19 +381,37 @@ def main():
     logs.mkdir(parents=True, exist_ok=True)
 
     cpus_list = [int(value) for value in args.cpus.split(',') if value.strip()]
-    overrides_by_cpus = {cpus: merge_overrides(cpus, args.arg) for cpus in cpus_list}
+    extra = list(args.arg)
+    if args.gpu_addon is not None:
+        extra.append('gpu-addon=1')
+    if args.diagnostics:
+        extra = [*DIAGNOSTIC_ARGS, *extra]
+    overrides_by_cpus = {cpus: merge_overrides(cpus, extra) for cpus in cpus_list}
 
     # The payload step's work directory is the core's *current* configuration
     # (out/<device>/<os>/<configuration>). Make the release configuration
     # explicit here instead of inheriting whichever config the core last ran,
     # or payload.img is read from a stale directory.
     completed = run_logged([sys.executable, str(core / 'unixnu'), 'defconfig', config_name,
-                            '-D', str(device)], core, dict(os.environ),
-                           logs / 'defconfig.log')
+                            '-D', str(device),
+                            *(['--config', str(args.local_config)] if args.local_config else [])],
+                           core, dict(os.environ), logs / 'defconfig.log')
     if completed.returncode != 0:
         print(completed.stdout[-4000:])
         raise SystemExit(f'defconfig {config_name} failed')
     print(f'== configuration {config_name} selected (work dir {work})')
+    if args.payload_allow_no_data_seed:
+        config_path = work / '.config'
+        if not config_path.is_file():
+            raise SystemExit(f'{config_path} missing after defconfig')
+        text = config_path.read_text()
+        replaced = text.replace('CONFIG_XNU_OWNER_DATA_MOUNT=y',
+                                '# CONFIG_XNU_OWNER_DATA_MOUNT is not set')
+        if replaced == text:
+            print('== payload config: CONFIG_XNU_OWNER_DATA_MOUNT already clear')
+        else:
+            config_path.write_text(replaced)
+            print('== payload config: cleared CONFIG_XNU_OWNER_DATA_MOUNT for the prebuilt kernel payload')
 
     prelink = None
     if args.prelink_kernel:
@@ -390,9 +449,11 @@ def main():
     seed_hex = '%016x' % seed
     env = dict(os.environ)
     env['UNIXNU_UNIQUE_CHIP_ID'] = seed_hex
-    dtb = stock['dtb']
-    dtb_path = out / 'plan3b-diting.dtb'
+    dtb = args.dtb.read_bytes() if args.dtb is not None else stock['dtb']
+    dtb_path = out / ('plan3b-diting.dtb' if args.dtb is None else args.dtb.name)
     dtb_path.write_bytes(dtb)
+    expected_slot = gzip.compress(Path(args.shim).read_bytes() + Path(args.fd).read_bytes(),
+                                  mtime=0) + dtb
 
     summary = {'device': str(device), 'core': str(core), 'work_dir': str(work),
                'kernel': {'path': str(kernel), 'bytes': kernel.stat().st_size, 'sha256': sha256_file(kernel)},
@@ -401,6 +462,11 @@ def main():
                'fd': {'path': str(args.fd.resolve()), 'sha256': sha256_file(args.fd.resolve())},
                'shim': {'path': str(args.shim.resolve()), 'sha256': sha256_file(args.shim.resolve())},
                'dtb': {'path': str(dtb_path), 'bytes': len(dtb), 'sha256': hashlib.sha256(dtb).hexdigest()},
+               'diagnostics': args.diagnostics,
+               'diagnostic_args': list(DIAGNOSTIC_ARGS) if args.diagnostics else [],
+               'gpu_addon': None if args.gpu_addon is None else {
+                   'path': str(args.gpu_addon), 'bytes': args.gpu_addon.stat().st_size,
+                   'sha256': sha256_file(args.gpu_addon)},
                'seed_source': 'B1 payload ADT /chosen unique-chip-id (value not recorded)',
                'hdiutil_used': False, 'variants': {}}
 
@@ -409,7 +475,11 @@ def main():
         overrides = overrides_by_cpus[cpus]
         print(f'== {variant}: payload step')
         command = [sys.executable, str(core / 'unixnu'), 'build', 'payload',
-                   '-D', str(device), '--kernel', str(kernel)]
+                   '-D', str(device), '--kernel', str(kernel),
+                   '--unique-chip-id', seed_hex,
+                   *(['--config', str(args.local_config)] if args.local_config else [])]
+        if args.gpu_addon is not None and not args.inject_gpu_addon:
+            command += ['--gpu-addon', str(args.gpu_addon)]
         for value in overrides:
             command += ['--kernel-arg', value]
         completed = run_logged(command, core, env, logs / f'payload-{variant}.log')
@@ -419,12 +489,24 @@ def main():
         payload = work / 'payload/payload.img'
         if not payload.is_file():
             raise SystemExit(f'{payload} missing after the payload step')
+        if args.gpu_addon is not None:
+            if args.inject_gpu_addon:
+                completed = subprocess.run(
+                    ['mcopy', '-o', '-i', str(payload), str(args.gpu_addon),
+                     '::/EFI/UniXNU/Payloads/kernel.macho.gpuaddon'],
+                    env=dict(os.environ, MTOOLS_SKIP_CHECK='1'), text=True,
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                if completed.returncode != 0:
+                    raise SystemExit(f'{variant}: addon injection failed:\n{completed.stdout}')
+            addon_member = payload_member(payload, '/EFI/UniXNU/Payloads/kernel.macho.gpuaddon')
+            if addon_member != args.gpu_addon.read_bytes():
+                raise SystemExit(f'{variant}: payload addon differs from --gpu-addon')
 
         print(f'== {variant}: finalize ADT')
         finalize = [sys.executable, str(device / 'scripts/finalize-diting-adt.py'),
                     '--work-dir', str(work), '--unique-chip-id', seed_hex,
                     '--cpus', str(cpus), '--hardware-dtb', str(dtb_path),
-                    '--volume-layout', str(args.volume_layout), '--ufs-probe']
+                    '--volume-layout', str(args.volume_layout)]
         completed = run_logged(finalize, device, env, logs / f'finalize-{variant}.log')
         # finalize prints its record (it names the seed): keep a redacted copy.
         (logs / f'finalize-{variant}.log').write_text(redact(completed.stdout, seed))
@@ -467,8 +549,8 @@ def main():
         packed = parse_boot_image(final.read_bytes())
         if packed['ramdisk'] != ramdisk:
             raise SystemExit(f'{variant}: ramdisk does not equal the PONGFAT1 envelope')
-        if packed['kernel'] != stock['kernel_slot']:
-            raise SystemExit(f'{variant}: kernel slot differs from the B1 shim+FD+DTB slot')
+        if packed['kernel'] != expected_slot:
+            raise SystemExit(f'{variant}: kernel slot differs from gzip(shim+FD)+DTB of the inputs')
         checks = {}
         for label, script, target in (
                 ('loader_adt_contract', 'check-loader-adt-contract.py', final),
@@ -481,6 +563,10 @@ def main():
                 raise SystemExit(f'{variant}: {label} checker failed:\n{completed.stdout}')
         summary['variants'][variant] = {
             'cpus': cpus, 'boot_args_overrides': overrides,
+            'diagnostics': args.diagnostics,
+            'gpu_addon': None if args.gpu_addon is None else {
+                'name': 'kernel.macho.gpuaddon', 'bytes': args.gpu_addon.stat().st_size,
+                'sha256': sha256_file(args.gpu_addon)},
             'payload': {'bytes': payload.stat().st_size, 'sha256': sha256_file(payload)},
             'adt': {'bytes': len(adt), 'sha256': hashlib.sha256(adt).hexdigest()},
             'boot_manifest': {'bytes': len(manifest), 'sha256': hashlib.sha256(manifest).hexdigest()},
@@ -488,7 +574,7 @@ def main():
             'loader': loader_checks,
             'image': {'path': str(final), 'bytes': final.stat().st_size, 'sha256': sha256_file(final)},
             'checks': checks,
-            'structure_matches_b1_kernel_slot': True,
+            'structure_matches_input_kernel_slot': True,
         }
         print(json.dumps(summary['variants'][variant], indent=2))
 

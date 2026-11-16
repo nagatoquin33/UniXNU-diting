@@ -55,6 +55,6 @@ def main():
   objects.append(obj)
  archive=out/'libDitingPower.a';archive.unlink(missing_ok=True)
  subprocess.run(['xcrun','libtool','-static','-o',str(archive),*map(str,objects)],env=env,check=True)
- (out/'build-report.json').write_text(json.dumps(dict(board='SM8475 Diting',guest='22H374',adsp_pas=1,adsp_carveout=[0x85700000,0x2800000],ipcc=0xed18000,smem=0x80900000,battery='Nothing standard PMIC GLINK, single pack, read only',audio='adsp_apps APM graphs, SID1801, stereo PCM ring (cs35l41@i2c@880000 amp backend pending; TFA9873 path retired); no microphone endpoint',firmware='Local REC image staged to /diting/firmware/adsp.mbn',runtime_observed=False),indent=2)+'\n')
+ (out/'build-report.json').write_text(json.dumps(dict(board='SM8475 Diting',guest='22H374',adsp_pas=1,adsp_carveout=[0x9fd00000,0x3100000],ipcc=0xed18000,smem=0x80900000,battery='Nothing standard PMIC GLINK, single pack, read only',audio='adsp_apps APM graphs, SID1801, stereo PCM ring (cs35l41@i2c@880000 amp backend pending; TFA9873 path retired); no microphone endpoint',firmware='Local stock ADSP image from the OS volume or staged addon',runtime_observed=False),indent=2)+'\n')
  print(archive)
 if __name__=='__main__':main()

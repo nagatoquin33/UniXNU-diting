@@ -13,3 +13,16 @@ zzzzzz-diting-runtime-rule-capacity.patch
 zzzzzzz-diting-frame-links.patch
 zzzzzzzz-diting-native-pac-keys.patch
 zzzzzzzzz-diting-exec-diagnostic.patch
+zzzzzzzzzz-diting-touch-irq.patch
+zzzzzzzzzzz-diting-console-pause.patch
+zzzzzzzzzzzz-diting-ramoops-ufs.patch
+zzzzzzzzzzzzz-diting-rpmh-tcs0.patch
+zzzzzzzzzzzzzz-diting-touch-config.patch
+zzzzzzzzzzzzzzz-diting-touch-reportspace.patch
+zzzzzzzzzzzzzzzz-diting-touch-thp.patch
+zzzzzzzzzzzzzzzzz-diting-touch-geni-perf.patch
+zzzzzzzzzzzzzzzzzz-diting-touch-latency.patch
+zzzzzzzzzzzzzzzzzzz-diting-kext-summary-mapping.patch
+zzzzzzzzzzzzzzzzzzzz-diting-gpu-addon-durability.patch
+zzzzzzzzzzzzzzzzzzzzz-diting-launchd-scratch.patch
+zzzzzzzzzzzzzzzzzzzzzzzz-diting-pwrkey.patch

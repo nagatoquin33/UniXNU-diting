@@ -8,7 +8,8 @@
 #include <sys/kauth.h>
 #include <IOKit/IOLib.h>
 int sheng_fw_open(const char *path,void **handle,uint64_t *size) {
- if(strcmp(path,"/diting/firmware/adsp.mbn"))return EINVAL;
+ if(strcmp(path,"/diting/firmware/adsp.mbn") &&
+    strcmp(path,"/private/var/ngpu/firmware/adsp.mbn"))return EINVAL;
  vnode_t vnode=NULLVP;vfs_context_t ctx=vfs_context_kernel();
  int rc=vnode_open(path,FREAD,0,0,&vnode,ctx);if(rc)return rc;
  struct vnode_attr va;VATTR_INIT(&va);VATTR_WANTED(&va,va_data_size);

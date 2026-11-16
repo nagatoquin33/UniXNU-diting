@@ -7,6 +7,7 @@
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IODeviceMemory.h>
 #include <kern/thread.h>
+#include <mach/vm_param.h>
 #include <sys/errno.h>
 #include <pexpert/pexpert.h>
 extern "C" {
@@ -21,7 +22,7 @@ kern_return_t clear_wait(thread_t, wait_result_t);
 #include "DitingPlatformResources.h"
 #include "ShengAdsp.h"
 int sheng_fw_open(const char *path, void **handle, uint64_t *size);
-extern unsigned long gPhysBase, gPhysSize;
+boolean_t pmap_has_managed_page(ppnum_t first, ppnum_t last);
 int sheng_fw_read(void *handle, uint64_t offset, void *to, size_t length);
 void sheng_fw_close(void *handle);
 }
@@ -43,7 +44,8 @@ enum Stage {
 };
 constexpr uint64_t kSmem = 0x80900000, kSmemSize = 0x200000, kMutex = 0x1f40000 + 3 * 0x1000, kIpcc = 0x0ed18000, kAoss = 0xc300000;
 constexpr uint64_t kRscDrv = 0x17a20000, kRscTcs = 0xd00, kCmdDb = 0x80860000, kCmdDbSize = 0x20000;
-constexpr uint64_t kAdspBase = 0x85700000, kAdspSize = 0x2800000, kDtbBase = 0x9e980000, kDtbSize = 0x80000;
+// Diting 原厂 DT 的 adsp_region，供 PAS1 装载原厂固件。
+constexpr uint64_t kAdspBase = 0x9fd00000, kAdspSize = 0x3100000;
 constexpr uint32_t kPasAdsp = 1, kPasDtb = 36, kRemotePid = 2, kItemIn = 443, kItemOut = 429, kItemCrash = 423;
 constexpr uint32_t kItemGlinkDesc = 478, kItemGlinkTx = 479, kItemGlinkRx = 480, kGlinkFifo = 0x4000;
 constexpr uint32_t kSpiIpcc = 229, kSpiRsc = 5;
@@ -222,13 +224,10 @@ bool readCmdDb(uint8_t *copy) {
 QcomRpmhResource gLcx, gLmx;
 int gTcs = -1;
 
-// Votes both rails to the given ARC index pair through active TCS 1 and waits up to 100 ms for its done interrupt. The active TCSs are 0
-// to 2 (tcs-config lists the active type first); the WiFi bring-up sends through TCS 0, so the two never share one. A request whose done
-// interrupt is not seen still counts (bit 15 of [15]): the WiFi rails show such requests take effect.
+// Wi-Fi 和 ADSP 经板级共享锁串行提交活动 TCS1 请求。
 int vote(uint32_t lcx, uint32_t lmx) {
     // These are shared rails on SM8475. Retain startup minima; never send
-    // Sheng's handover zero vote into the GPU/WLAN parents. One board lock
-    // serializes active TCS4, while the GPU retains active TCS3.
+    // Sheng's handover zero vote into the GPU/WLAN parents.
     if(!lcx && !lmx)return 0;
     return diting_rpmh_vote(gLcx.address,lcx) && diting_rpmh_vote(gLmx.address,lmx)?0:-60;
 }
@@ -517,9 +516,9 @@ bool start() {
     if (rc) {note("fw: ", path); fail(StFirmware, rc); return false;}
     native_adsp_stats[7] = (int32_t)(adsp.size >> 10);
     stage(StFirmware);
-    // The carveout must be reserved outside DarwinBoot's actual owned RAM.
-    if (gPhysBase < kAdspBase+kAdspSize && kAdspBase < gPhysBase+gPhysSize) {
-        IOLog("DitingAdsp: carveout overlaps XNU RAM base=%lx size=%lx\n",gPhysBase,gPhysSize);
+    // 用 pmap 核对所有已登记的 RAM 段，保护 ADSP 保留区。
+    if (pmap_has_managed_page((ppnum_t)atop(kAdspBase), (ppnum_t)atop(kAdspBase + kAdspSize - 1))) {
+        IOLog("DitingAdsp: carveout overlaps XNU RAM base=%llx size=%llx\n", kAdspBase, kAdspSize);
         fail(StFirmware,-16);release(adsp);return false;
     }
     if (qcom_mdt_span(&adsp.mdt)>kAdspSize) {fail(StFirmware,-7);release(adsp);return false;}

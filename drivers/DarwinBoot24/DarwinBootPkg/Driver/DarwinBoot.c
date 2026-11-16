@@ -206,7 +206,7 @@ typedef struct { UINT64 Start, Size; } DITING_RAM_BANK;
 
 STATIC
 BOOLEAN
-AdtNode (CONST UINT8 *Data, UINTN Size, UINTN *Offset, UINTN Depth, UINTN ParentPath, UINTN *RamdiskOffset, UINTN *TrustCacheOffset, UINT64 *WindowSize, BOOLEAN *KeepPacked)
+AdtNode (CONST UINT8 *Data, UINTN Size, UINTN *Offset, UINTN Depth, UINTN ParentPath, UINTN *RamdiskOffset, UINTN *TrustCacheOffset, UINTN *AddonOffset, UINT64 *WindowSize, BOOLEAN *KeepPacked)
 {
   UINT32 Properties;
   UINT32 Children;
@@ -215,6 +215,7 @@ AdtNode (CONST UINT8 *Data, UINTN Size, UINTN *Offset, UINTN Depth, UINTN Parent
   UINTN  Path;
   UINTN  Candidate;
   UINTN  TrustCandidate;
+  UINTN  AddonCandidate;
   UINTN  MemoryCandidate;
   UINTN  AudioCandidate, RamCandidate, AllowedCandidate, AllowedCount;
   CONST UINT8 *Name;
@@ -224,6 +225,7 @@ AdtNode (CONST UINT8 *Data, UINTN Size, UINTN *Offset, UINTN Depth, UINTN Parent
   NameLength = 0;
   Candidate = MAX_UINTN;
   TrustCandidate = MAX_UINTN;
+  AddonCandidate = MAX_UINTN;
   MemoryCandidate = MAX_UINTN;
   AudioCandidate = MAX_UINTN;
   RamCandidate = AllowedCandidate = MAX_UINTN; AllowedCount = 0;
@@ -269,6 +271,10 @@ AdtNode (CONST UINT8 *Data, UINTN Size, UINTN *Offset, UINTN Depth, UINTN Parent
       if ((TrustCandidate != MAX_UINTN) || (Length != 16)) { return FALSE; }
       TrustCandidate = *Offset;
     }
+    if (AsciiStrCmp ((CONST CHAR8 *)(Data + *Offset - 36), "GpuAddon") == 0) {
+      if ((AddonCandidate != MAX_UINTN) || (Length != 16)) { return FALSE; }
+      AddonCandidate = *Offset;
+    }
     if (AsciiStrCmp ((CONST CHAR8 *)(Data + *Offset - 36), "darwinboot-memory-size") == 0) {
       if ((MemoryCandidate != MAX_UINTN) || (Length != 8)) { return FALSE; }
       MemoryCandidate = *Offset;
@@ -289,6 +295,10 @@ AdtNode (CONST UINT8 *Data, UINTN Size, UINTN *Offset, UINTN Depth, UINTN Parent
     if (*TrustCacheOffset != MAX_UINTN) { return FALSE; }
     *TrustCacheOffset = TrustCandidate;
   }
+  if ((Path == 2) && (AddonCandidate != MAX_UINTN)) {
+    if (*AddonOffset != MAX_UINTN) { return FALSE; }
+    *AddonOffset = AddonCandidate;
+  }
   if (AudioCandidate != MAX_UINTN) {
     if ((Path != 1) || (mAudioDmaOffset != MAX_UINTN)) { return FALSE; }
     mAudioDmaOffset = AudioCandidate;
@@ -304,7 +314,7 @@ AdtNode (CONST UINT8 *Data, UINTN Size, UINTN *Offset, UINTN Depth, UINTN Parent
   }
   if (Children > (Size - *Offset) / 8) { return FALSE; }
   for (Index = 0; Index < Children; Index++) {
-    if (!AdtNode (Data, Size, Offset, Depth + 1, Path, RamdiskOffset, TrustCacheOffset, WindowSize, KeepPacked)) { return FALSE; }
+    if (!AdtNode (Data, Size, Offset, Depth + 1, Path, RamdiskOffset, TrustCacheOffset, AddonOffset, WindowSize, KeepPacked)) { return FALSE; }
   }
   return TRUE;
 }
@@ -615,6 +625,7 @@ Boot (
   VOID                            *Image;
   VOID                            *Tree;
   VOID                            *TrustCaches;
+  VOID                            *Addon;
   UINTN                           ImageSize;
   UINTN                           TreeSize;
   UINTN                           TrustCacheSize;
@@ -638,6 +649,9 @@ Boot (
   BOOLEAN                         KeepPacked;
   UINTN                           TrustCacheOffset;
   UINT64                          TrustCacheAddress;
+  UINTN                           AddonOffset;
+  UINTN                           AddonSize;
+  UINT64                          AddonAddress;
   UINT64                          TrampolineAddress;
   UINTN                           TrampolineBytes;
   VOID (EFIAPI *Enter)(UINT64, UINT64, UINT64, UINT64, UINT64, UINT64);
@@ -678,6 +692,8 @@ Boot (
   Image = NULL;
   Tree = NULL;
   TrustCaches = NULL;
+  Addon = NULL;
+  AddonSize = 0;
   TreePath = NULL;
   Map = NULL;
   Address = 0;
@@ -705,13 +721,14 @@ Boot (
   Offset = 0;
   RamdiskOffset = MAX_UINTN;
   TrustCacheOffset = MAX_UINTN;
+  AddonOffset = MAX_UINTN;
   mAudioDmaOffset = MAX_UINTN;
   mRamWireOffset = mRamAllowedOffset = MAX_UINTN;
   mRamAllowedCount = 0;
   WindowSize = 0;
   KeepPacked = FALSE;
   Stage = L"PARSE ADT";
-  if (!AdtNode (Tree, TreeSize, &Offset, 0, 3, &RamdiskOffset, &TrustCacheOffset, &WindowSize, &KeepPacked) || (Offset != TreeSize)) { Status = EFI_COMPROMISED_DATA; goto Fail; }
+  if (!AdtNode (Tree, TreeSize, &Offset, 0, 3, &RamdiskOffset, &TrustCacheOffset, &AddonOffset, &WindowSize, &KeepPacked) || (Offset != TreeSize)) { Status = EFI_COMPROMISED_DATA; goto Fail; }
   if (KeepPacked && (!RamdiskPacked || (RamdiskOffset == MAX_UINTN))) { Status = EFI_COMPROMISED_DATA; goto Fail; }
   if (WindowSize == 0) { WindowSize = WINDOW_SIZE; }
   if (Kernel.Base > MAX_UINT64 - WindowSize) { Status = EFI_LOAD_ERROR; goto Fail; }
@@ -734,6 +751,27 @@ Boot (
       goto Fail;
     }
   } else if (TrustCacheOffset != MAX_UINTN) {
+    Status = EFI_COMPROMISED_DATA;
+    goto Fail;
+  }
+  //
+  // The GPU addon (kernel.macho.gpuaddon, scripts/make-gpu-addon.py): files
+  // the kernel writes into the Data volume before its addon mounts. Only the
+  // header is checked here; the kernel validates every entry.
+  //
+  CopyMem (TreePath, Request->KernelPath, Length);
+  StrCatS (TreePath, Length / sizeof (CHAR16) + 11, L".gpuaddon");
+  Stage = L"READ GPUADDON";
+  Status = ReadFile (Root, TreePath, SIZE_64MB, &Addon, &AddonSize);
+  if (EFI_ERROR (Status) && (Status != EFI_NOT_FOUND)) { goto Fail; }
+  if (Addon != NULL) {
+    if ((AddonOffset == MAX_UINTN) || (U64 ((UINT8 *)Tree + AddonOffset) != 0) ||
+        (U64 ((UINT8 *)Tree + AddonOffset + 8) != 0) || (AddonSize < 24) ||
+        (CompareMem (Addon, "NGPUADD2", 8) != 0) || (U64 ((UINT8 *)Addon + 16) != AddonSize)) {
+      Status = EFI_COMPROMISED_DATA;
+      goto Fail;
+    }
+  } else if (AddonOffset != MAX_UINTN) {
     Status = EFI_COMPROMISED_DATA;
     goto Fail;
   }
@@ -766,7 +804,8 @@ Boot (
   RamdiskAddress = ALIGN_VALUE (TreeAddress + TreeSize, EFI_PAGE_SIZE);
   RamdiskBytes = ALIGN_VALUE (KeepPacked ? Request->RamdiskSize : RamdiskExpandedSize, EFI_PAGE_SIZE);
   TrustCacheAddress = RamdiskAddress + RamdiskBytes;
-  Used = ALIGN_VALUE (TrustCacheAddress + TrustCacheSize, SIZE_16KB) - Address;
+  AddonAddress = TrustCacheAddress + ALIGN_VALUE (TrustCacheSize, EFI_PAGE_SIZE);
+  Used = ALIGN_VALUE (AddonAddress + AddonSize, SIZE_16KB) - Address;
   TrampolineAddress = Address + Used;
   TrampolineBytes = (UINTN)DarwinEnterEnd - (UINTN)DarwinEnter;
   if ((TrampolineBytes == 0) || (TrampolineBytes > EFI_PAGE_SIZE)) { Status = EFI_LOAD_ERROR; goto Fail; }
@@ -817,6 +856,12 @@ Boot (
     WriteUnaligned64 ((UINT64 *)(UINTN)(TreeAddress + TrustCacheOffset), TrustCacheAddress);
     WriteUnaligned64 ((UINT64 *)(UINTN)(TreeAddress + TrustCacheOffset + 8), TrustCacheSize);
     FreePool (TrustCaches); TrustCaches = NULL;
+  }
+  if (Addon != NULL) {
+    CopyMem ((VOID *)(UINTN)AddonAddress, Addon, AddonSize);
+    WriteUnaligned64 ((UINT64 *)(UINTN)(TreeAddress + AddonOffset), AddonAddress);
+    WriteUnaligned64 ((UINT64 *)(UINTN)(TreeAddress + AddonOffset + 8), AddonSize);
+    FreePool (Addon); Addon = NULL;
   }
   FreePool (Image); Image = NULL;
   FreePool (Tree); Tree = NULL;
@@ -914,6 +959,7 @@ Fail:
   if (Image != NULL) { FreePool (Image); }
   if (Tree != NULL) { FreePool (Tree); }
   if (TrustCaches != NULL) { FreePool (TrustCaches); }
+  if (Addon != NULL) { FreePool (Addon); }
   if (TreePath != NULL) { FreePool (TreePath); }
   if (Map != NULL) { FreePool (Map); }
   for (Index = 1; Index < OwnedCount; Index++) {

@@ -7,9 +7,11 @@
 #include <IOKit/IOService.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IOBSD.h>
+#include <IOKit/IODeviceTreeSupport.h>
 #include <IOKit/storage/IOBlockStorageDevice.h>
 #include <IOKit/storage/IOMedia.h>
 #include <IOKit/IOLib.h>
+#include <machine/machine_routines.h>
 #include <vm/vm_kern.h>
 #include <kern/clock.h>
 #include <mach/mach_time.h>
@@ -30,6 +32,9 @@
 // without it UFS refuses SMMU programming rather than race a shared table.
 extern "C" bool diting_smmu_lease_lock(void) __attribute__((weak_import));
 extern "C" void diting_smmu_lease_unlock(void) __attribute__((weak_import));
+extern "C" {
+extern unsigned long gPhysBase, gPhysSize;
+}
 
 namespace {
 #include "RootTransportLayout.h"
@@ -446,6 +451,28 @@ extern "C" int native_diting_ufs_data_volume_device(const char *uuid,dev_t *devi
     *bytes=gRootWindows[i].size;return 1;
   }
   return 0;
+}
+
+// The GPU addon the loader placed after the trust caches (/chosen/memory-map/GpuAddon, scripts/make-gpu-addon.py), for the kernel's
+// boot-time addon install (kern_exec.c). On this board the storage provider is UFS, not NativeRamBlock, so the same boot-payload
+// accessor is exported here under its upstream name. Boot memory, like the seed: never freed here. Returns 0 without one.
+extern "C" int native_ram_block_gpu_addon(const uint8_t **data,uint64_t *bytes) {
+  if(!data || !bytes)return 0;
+  *data=nullptr;*bytes=0;
+  IORegistryEntry *map=IORegistryEntry::fromPath("/chosen/memory-map",gIODTPlane);
+  if(!map)return 0;
+  OSData *range=OSDynamicCast(OSData,map->getProperty("GpuAddon"));
+  uint64_t physical=0,size=0;
+  if(range && range->getLength()==16){
+    memcpy(&physical,range->getBytesNoCopy(),8);
+    memcpy(&size,static_cast<const uint8_t *>(range->getBytesNoCopy())+8,8);
+  }
+  map->release();
+  if(!size || size>(UINT64_C(64)<<20) || (physical&4095) || physical<gPhysBase || size>gPhysSize || physical-gPhysBase>gPhysSize-size)return 0;
+  *data=reinterpret_cast<const uint8_t *>(ml_static_ptovirt(physical));
+  if(!*data)return 0;
+  *bytes=size;
+  return 1;
 }
 
 bool DitingUfsBlock::init(OSDictionary *properties, const RootDiskWindow &selected) {

@@ -1,0 +1,18 @@
+--- a/bsd/dev/diting_goodix.c
++++ b/bsd/dev/diting_goodix.c
+@@ -165,8 +165,13 @@
+ #define CMD_DB_SIZE             0x20000UL
+ #define RSC_PHYS                rsc_phys    /* the application processor's "DRV 2" */
+ #define RSC_SIZE                0x10000UL
+-#define TCS(reg)                (rsc + 0xd00 + 4 * 0x2a0 + (reg))  /* APSS DRV2 active TCS4, the set
+-                                                                     * DitingPlatformResources validates */
++#define TCS(reg)                (rsc + 0xd00 + (reg))           /* APSS DRV2 active TCS0: the live
++                                                                     * tcs-config grants HLOS TCS0-2
++                                                                     * (type ACTIVE first); TCS3/4 are
++                                                                     * SLEEP slots that drop the
++                                                                     * trigger. The platform-wide
++                                                                     * TCS3/TCS4 convention mislabels
++                                                                     * them; shared-IRQ bit0 is TCS0. */
+ #define TCS_IRQ_ENABLE          0x00
+ #define TCS_IRQ_STATUS          0x04
+ #define TCS_IRQ_CLEAR           0x08

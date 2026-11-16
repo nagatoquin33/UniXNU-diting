@@ -17,6 +17,7 @@
 #include "DitingAdrenoSmmu.h"
 #include "DitingAdrenoRegisters.h"
 #include "DitingAdrenoCp.h"
+#include "../DitingPower/DitingPlatformResources.h"
 
 extern "C" const uint8_t DitingAdrenoGmuFirmware[];
 extern "C" const size_t DitingAdrenoGmuFirmwareBytes;
@@ -116,15 +117,14 @@ static bool vote_parents(const DitingPowerInputs &in)
     uint32_t cx=retained_corner(in.cx);
     uint32_t mx=retained_corner(in.mx);
     if(cx==16 || mx==16){record("SKIP ARC AUX levels",1,cx,mx);return false;}
-    // Check active TCS4 as well: the AOP must never receive concurrent
-    // commands for the same ARC address. Preserve all foreign in-flight work.
-    const size_t other=0xd00+4*0x2a0;
+    // 避免与 Wi-Fi、ADSP 同时向同一 ARC 地址发送请求。
+    const size_t other=0xd00+DITING_RPMH_SHARED_TCS*0x2a0;
     if(!rd(rsc,other+0x18)) {
         uint32_t enabled=rd(rsc,other+0x1c);
         for(unsigned i=0;i<ncpt && i<16;i++)if(enabled&(1u<<i)) {
             uint32_t address=rd(rsc,other+0x34+20*i);
             if(address==in.mx.address || address==in.cx.address) {
-                record("SKIP conflicting active TCS4",1,address,enabled);return false;
+                record("SKIP conflicting shared RPMh vote",1,address,enabled);return false;
             }
         }
     }

@@ -1,0 +1,40 @@
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -8432,13 +8432,18 @@
+ 	vm_map_t map = current_map();
+ 	mach_vm_offset_t scratch_addr = 0;
+ 	mach_vm_size_t map_page_size = vm_map_page_size(map);
++	mach_vm_size_t scratch_size = map_page_size;
++#if defined(XNU_OWNER_DATA_MOUNT) && XNU_OWNER_DATA_MOUNT
++	/* 第一页保留给 SystemOS 和 init 的 argv/envp，后续挂载复用第二页。 */
++	scratch_size += map_page_size;
++#endif
+ 
+ #if DEVELOPMENT || DEBUG
+ 	/* Use the opportunity to initialize exec's debug log stream */
+ 	exec_log_handle = os_log_create("com.apple.xnu.bsd", "exec");
+ #endif /* DEVELOPMENT || DEBUG */
+ 
+-	kern_return_t scratch_result = mach_vm_allocate_kernel(map, &scratch_addr, map_page_size,
++	kern_return_t scratch_result = mach_vm_allocate_kernel(map, &scratch_addr, scratch_size,
+ 	    VM_MAP_KERNEL_FLAGS_ANYWHERE());
+ 	if (scratch_result != KERN_SUCCESS) panic("load_init_program: scratch allocation failed: %d", scratch_result);
+ 	user_addr_t init_envp = USER_ADDR_NULL;
+@@ -8461,14 +8466,15 @@
+ 	}
+ #endif
+ #if defined(XNU_OWNER_DATA_MOUNT) && XNU_OWNER_DATA_MOUNT
+-	int data_error = native_owner_data_prepare(p, (user_addr_t)scratch_addr);
++	user_addr_t data_scratch = (user_addr_t)(scratch_addr + map_page_size);
++	int data_error = native_owner_data_prepare(p, data_scratch);
+ 	if (data_error) printf("DITING DEVELOPMENT: scratch Data mount SKIP error=%d stage=%d\n",
+ 	    data_error, native_owner_data_stage);
+ 	else printf("DITING APFS: Data mount PASS path=/private/var device=%s rw=%d bytes=%llu\n",
+ 	    native_owner_data_device_path, !native_owner_data_readonly,
+ 	    (unsigned long long)native_owner_data_seed_size);
+ 	if (!data_error) {
+-		native_gpu_addon_prepare(p, (user_addr_t)scratch_addr);
++		native_gpu_addon_prepare(p, data_scratch);
+ 	}
+ #endif
+ 	}

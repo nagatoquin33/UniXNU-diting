@@ -1,0 +1,571 @@
+--- a/bsd/dev/diting_goodix.c
++++ b/bsd/dev/diting_goodix.c
+@@ -18,6 +18,10 @@
+ extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
+ extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
+ extern kern_return_t thread_terminate(thread_t thread);
++extern vm_offset_t ml_vtophys(vm_offset_t vaddr);
++extern boolean_t ml_set_interrupts_enabled(boolean_t enable);
++extern bool diting_smmu_lease_lock(void) __attribute__((weak_import));
++extern void diting_smmu_lease_unlock(void) __attribute__((weak_import));
+ 
+ static vm_offset_t tlmm, gcc, se, rsc, cmd_db;
+ static uint64_t tlmm_phys, gcc_phys, se_phys, rsc_phys, cmd_db_phys;
+@@ -364,20 +368,41 @@
+ 	return (uint32_t)hz;
+ }
+ 
++/* BRANCH_HALT_VOTED under HWCG keeps CLK_OFF (bit 31) set while idle and sets
++ * bit 1 (HW_CTL / NOC handshake) so the branch opens on a bus request. */
+ static bool
+-clocks_on(void)
++clock_ready(vm_offset_t reg)
++{
++	uint32_t v = rd(reg);
++	return !(v & CLOCK_OFF) || (v & 2u);
++}
++
++static bool
++clocks_on(uint32_t target_hz)
+ {
+ 	wr(GCC_VOTE, rd(GCC_VOTE) | VOTE_QUP0_CORE_2X | VOTE_QUP0_CORE | VOTE_QUP0_M_AHB | VOTE_QUP0_S_AHB);
++	se_source_hz = 0;
++	se_clock_select = 0;
+ 	if (rd(GCC_QUP0_SE4_DFSR) & 1) {
+-		/* preset rates: the lowest that is at least 4 MHz */
++		uint32_t best_hi = 0, best_hi_sel = 0;
+ 		for (uint32_t level = 0; level < 8; level++) {
+ 			uint32_t hz = rcg_rate(rd(GCC_QUP0_SE4_PERF_CFG(level)), rd(GCC_QUP0_SE4_PERF_M(level)),
+ 			    rd(GCC_QUP0_SE4_PERF_N(level)));
+-
+-			if (hz >= 4000000 && (se_source_hz == 0 || hz < se_source_hz)) {
++			if (!hz) {
++				continue;
++			}
++			if (hz >= target_hz && (se_source_hz == 0 || hz < se_source_hz)) {
+ 				se_source_hz = hz;
+ 				se_clock_select = level;
+ 			}
++			if (hz > best_hi) {
++				best_hi = hz;
++				best_hi_sel = level;
++			}
++		}
++		if (se_source_hz == 0 && best_hi > 0) {
++			se_source_hz = best_hi;
++			se_clock_select = best_hi_sel;
+ 		}
+ 		if (se_source_hz == 0) {
+ 			printf("goodix: no usable preset clock rate\n");
+@@ -399,7 +424,9 @@
+ 	}
+ 	wr(GCC_VOTE, rd(GCC_VOTE) | VOTE_QUP0_SE4);
+ 	for (int i = 0; i < 1000; i++) {
+-		if (!((rd(GCC_QUP0_M_AHB_CBCR) | rd(GCC_QUP0_S_AHB_CBCR) | rd(GCC_QUP0_SE4_CBCR)) & CLOCK_OFF)) {
++		if (clock_ready(GCC_QUP0_M_AHB_CBCR) &&
++		    clock_ready(GCC_QUP0_S_AHB_CBCR) &&
++		    clock_ready(GCC_QUP0_SE4_CBCR)) {
+ 			return true;
+ 		}
+ 		sleep_us(10);
+@@ -450,37 +477,236 @@
+ #define GENI_TX_WATERMARK       (se + 0x80c)
+ #define GENI_RX_WATERMARK       (se + 0x810)
+ #define GENI_RX_RFR_WATERMARK   (se + 0x814)
++#define SE_DMA_TX_PTR_L         (se + 0xc30)
++#define SE_DMA_TX_PTR_H         (se + 0xc34)
++#define SE_DMA_TX_ATTR          (se + 0xc38)
++#define SE_DMA_TX_LEN           (se + 0xc3c)
++#define SE_DMA_TX_IRQ_STAT      (se + 0xc40)
+ #define SE_DMA_TX_IRQ_CLR       (se + 0xc44)
++#define SE_DMA_TX_IRQ_EN_SET    (se + 0xc4c)
++#define SE_DMA_TX_FSM_RST       (se + 0xc58)
++#define SE_DMA_RX_PTR_L         (se + 0xd30)
++#define SE_DMA_RX_PTR_H         (se + 0xd34)
++#define SE_DMA_RX_ATTR          (se + 0xd38)
++#define SE_DMA_RX_LEN           (se + 0xd3c)
++#define SE_DMA_RX_IRQ_STAT      (se + 0xd40)
+ #define SE_DMA_RX_IRQ_CLR       (se + 0xd44)
++#define SE_DMA_RX_IRQ_EN_SET    (se + 0xd4c)
++#define SE_DMA_RX_FSM_RST       (se + 0xd58)
+ #define SE_GSI_EVENT_EN         (se + 0xe18)
+ #define SE_IRQ_EN               (se + 0xe1c)
+-#define SE_HW_PARAM_0           (se + 0xe24)    /* [21:16] FIFO depth in words */
++#define SE_HW_PARAM_0           (se + 0xe24)
+ #define SE_DMA_GENERAL_CFG      (se + 0xe30)
+ 
++#define QUP_WRAPPER_PHYS        0x009c0000UL
++#define QUP_WRAPPER_SID         0x5a3u          /* live DT geniqup@9c0000 iommus */
++#define APPS_SMMU_PHYS          0x15000000UL
++#define APPS_SMMU_SIZE          0xd0000UL
++
+ #define M_CMD_DONE              (1u << 0)
+ #define M_CMD_CANCEL            (1u << 4)
+ #define M_CMD_ABORT             (1u << 5)
+ #define M_ERRORS                ((1u << 1) | (1u << 2) | (1u << 3) | (1u << 24) | (1u << 25) | (1u << 28) | (1u << 29))
++#define SPI_TX_ONLY             (1u << 27)
+ #define SPI_FULL_DUPLEX         (3u << 27)
++#define GENI_DMA_DONE           (1u << 0)
++#define GENI_DMA_AHB_ERR        (1u << 2)
++#define GENI_DMA_TX_ATTR_EOT    (1u << 0)
++
++static uint32_t fifo_depth, geni_actual_hz;
++static bool geni_use_dma;
++static uint64_t geni_dma_tx_phys, geni_dma_rx_phys;
++static const char *spi_transport_name = "bitbang";
++static struct {
++	uint8_t tx[4096];
++	uint8_t rx[4096];
++} __attribute__((aligned(16384))) geni_dma_buf;
++
++static void
++dma_cache(void *p, size_t n, int clean_only)
++{
++	uint64_t ctr = 0;
++	__asm__ volatile("mrs %0, ctr_el0" : "=r"(ctr));
++	size_t line = 4u << ((ctr >> 16) & 15u);
++	for (uintptr_t a = (uintptr_t)p & ~(line - 1), end = (uintptr_t)p + n; a < end; a += line) {
++		if (clean_only) {
++			__asm__ volatile("dc cvac, %0" :: "r"(a) : "memory");
++		} else {
++			__asm__ volatile("dc civac, %0" :: "r"(a) : "memory");
++		}
++	}
++	__asm__ volatile("dsb sy" ::: "memory");
++}
+ 
+-static uint32_t fifo_depth;
++static uint64_t
++dma_vtop(const void *p)
++{
++	vm_offset_t va = (vm_offset_t)p;
++	boolean_t enabled = ml_set_interrupts_enabled(FALSE);
++	uint64_t par = 0;
++	__asm__ volatile("at s1e1r, %1\n\tisb\n\tmrs %0, par_el1" : "=r"(par) : "r"(va) : "memory");
++	ml_set_interrupts_enabled(enabled);
++	if (!(par & 1u)) {
++		return (par & 0x0000fffffffff000ULL) | (va & 0xfffu);
++	}
++	return ml_vtophys(va);
++}
++
++static unsigned
++smmu_addr_bits(unsigned code)
++{
++	switch (code) {
++	case 0: return 32;
++	case 1: return 36;
++	case 2: return 40;
++	case 3: return 42;
++	case 4: return 44;
++	case 5: return 48;
++	default: return 0;
++	}
++}
++
++static const char *
++geni_dma_prepare(void)
++{
++	if (!diting_smmu_lease_lock || !diting_smmu_lease_unlock) {
++		return "SMMU lease symbols unavailable for GENI DMA";
++	}
++	geni_dma_tx_phys = dma_vtop(geni_dma_buf.tx);
++	geni_dma_rx_phys = dma_vtop(geni_dma_buf.rx);
++	if (!geni_dma_tx_phys || !geni_dma_rx_phys || (geni_dma_tx_phys & 0xfffu) || (geni_dma_rx_phys & 0xfffu)) {
++		return "GENI DMA page translation failed";
++	}
++	bzero(&geni_dma_buf, sizeof(geni_dma_buf));
++	dma_cache(&geni_dma_buf, sizeof(geni_dma_buf), 0);
++
++	vm_offset_t smmu = ml_io_map(APPS_SMMU_PHYS, APPS_SMMU_SIZE);
++	if (!smmu) {
++		return "apps_smmu map failed";
++	}
++	if (!diting_smmu_lease_lock()) {
++		return "apps_smmu lease lock failed";
++	}
++
++	const char *err = NULL;
++	uint32_t idr0 = rd(smmu + 0x20), idr1 = rd(smmu + 0x24), idr2 = rd(smmu + 0x28);
++	unsigned count = idr0 & 255u, banks = idr1 & 255u;
++	unsigned pages = 1u << (((idr1 >> 28) & 7u) + 1u);
++	uint64_t rx_end = geni_dma_rx_phys + 4096u, tx_end = geni_dma_tx_phys + 4096u;
++	uint64_t hi = rx_end > tx_end ? rx_end : tx_end;
++	if (!(idr0 & (1u << 30)) || !(idr2 & (1u << 12))) {
++		err = "SMMU stage 1 unsupported";
++		goto out;
++	}
++	for (unsigned shift = 0; shift <= 8; shift += 4) {
++		unsigned bits = smmu_addr_bits((idr2 >> shift) & 15u);
++		if (!bits || hi > (1ULL << bits)) {
++			err = "GENI DMA exceeds SMMU width";
++			goto out;
++		}
++	}
++	if ((idr1 >> 31) || !count || pages > 128 || banks < 2 || banks > 128 || (pages + banks) * 4096u > APPS_SMMU_SIZE) {
++		err = "unsupported SMMU geometry";
++		goto out;
++	}
++	if (count > 128) {
++		count = 128;
++	}
++	unsigned bank = banks - 1u, slot = 0xffffffffu, matches = 0, sharing = 0, reuse = 0;
++	for (unsigned i = 0; i < count; i++) {
++		uint32_t smr = rd(smmu + 0x800 + 4 * i);
++		if (!(smr & 0x80000000u)) {
++			if (slot == 0xffffffffu) {
++				slot = i;
++			}
++			continue;
++		}
++		uint32_t s2cr = rd(smmu + 0xc00 + 4 * i);
++		uint32_t mask = (smr >> 16) & 0x7fffu;
++		int our_bank = ((s2cr >> 16) & 3u) == 0 && (s2cr & 255u) == bank;
++		if (((smr ^ QUP_WRAPPER_SID) & 0xffffu & ~mask) == 0) {
++			if (++matches > 1 || mask || !our_bank) {
++				err = "conflicting QUP SMMU mapping";
++				goto out;
++			}
++			reuse = 1;
++			slot = i;
++		} else if (our_bank) {
++			sharing++;
++		}
++	}
++	vm_offset_t cb = smmu + (pages + bank) * 4096u;
++	uint32_t sctlr = rd(cb), cbar = rd(smmu + 0x1000 + 4 * bank), cba2r = rd(smmu + 0x1800 + 4 * bank);
++	int bank_ready = (sctlr == 0 && cbar == 0x10000u && (cba2r & ~1u) == 0 && (cba2r & 1u));
++	if ((sctlr & 1u) || ((sharing || reuse) && !bank_ready)) {
++		err = "SMMU bypass bank not ready";
++		goto out;
++	}
++	if (slot == 0xffffffffu) {
++		err = "no free SMMU group";
++		goto out;
++	}
++	if (!bank_ready) {
++		wr(cb, 0);
++		wr(smmu + 0x1800 + 4 * bank, 1);
++		wr(smmu + 0x1000 + 4 * bank, 0x10000u);
++	}
++	if (rd(cb) != 0 || rd(smmu + 0x1800 + 4 * bank) != 1 || rd(smmu + 0x1000 + 4 * bank) != 0x10000u) {
++		err = "SMMU bypass bank readback failed";
++		goto out;
++	}
++	if (!reuse) {
++		wr(smmu + 0xc00 + 4 * slot, bank);
++		if (rd(smmu + 0xc00 + 4 * slot) != bank) {
++			err = "SMMU S2CR readback failed";
++			goto out;
++		}
++		wr(smmu + 0x800 + 4 * slot, 0x80000000u | QUP_WRAPPER_SID);
++	}
++	if (rd(smmu + 0x800 + 4 * slot) != (0x80000000u | QUP_WRAPPER_SID) || rd(smmu + 0xc00 + 4 * slot) != bank) {
++		err = "SMMU SMR readback failed";
++		goto out;
++	}
++out:
++	diting_smmu_lease_unlock();
++	return err;
++}
+ 
+ /* 0 = ready; otherwise why the engine cannot be used */
+ static const char *
+ geni_spi_init(uint32_t hz)
+ {
+-	uint32_t divider;
++	uint32_t divider, fw_rev = rd(GENI_FW_REVISION_RO), if_dis = rd(GENI_IF_DISABLE_RO), hw0 = rd(SE_HW_PARAM_0);
++	uint32_t oversampling = 1, depth_mask = 0x3fu;
++	vm_offset_t wrap = ml_io_map(QUP_WRAPPER_PHYS, 0x1000);
+ 
+-	if ((rd(GENI_FW_REVISION_RO) >> 8 & 0xff) != 1) {
+-		return "the serial engine has no SPI firmware";
++	if (wrap) {
++		uint32_t ver = rd(wrap + 4), major = ver >> 28, minor = (ver >> 16) & 0xfffu;
++		if ((major == 3 && minor >= 10) || major > 3) {
++			depth_mask = 0xffu;
++		}
++		if (major == 1 && minor == 0) {
++			oversampling = 2;
++		}
+ 	}
+-	if (rd(GENI_IF_DISABLE_RO) & 1) {
+-		return "the serial engine's FIFO interface is disabled";
++	if (((fw_rev >> 8) & 0xff) != 1) {
++		return "the serial engine has no SPI firmware";
+ 	}
+-	fifo_depth = rd(SE_HW_PARAM_0) >> 16 & 0x3f;
++	fifo_depth = (hw0 >> 16) & depth_mask;
+ 	if (fifo_depth < 4) {
+ 		return "the serial engine reports no FIFO";
+ 	}
++	geni_use_dma = false;
++	if (if_dis & 1) {
++		const char *dma_err = geni_dma_prepare();
++		if (dma_err) {
++			return dma_err;
++		}
++		geni_use_dma = true;
++		spi_transport_name = "GENI-DMA";
++	} else {
++		spi_transport_name = "GENI-FIFO";
++	}
+ 	wr(SE_GSI_EVENT_EN, 0);
+ 	wr(GENI_M_IRQ_CLEAR, 0xffffffff);
+ 	wr(GENI_S_IRQ_CLEAR, 0xffffffff);
+@@ -490,13 +716,18 @@
+ 	wr(SE_DMA_GENERAL_CFG, rd(SE_DMA_GENERAL_CFG) | 0xf);
+ 	wr(GENI_OUTPUT_CTRL, 0x7f);
+ 	wr(GENI_FORCE_DEFAULT, 1);
+-	wr(GENI_DMA_MODE_EN, rd(GENI_DMA_MODE_EN) & ~1u);
+ 	wr(GENI_RX_WATERMARK, fifo_depth - 3);
+ 	wr(GENI_RX_RFR_WATERMARK, fifo_depth - 2);
+ 	wr(GENI_TX_WATERMARK, 0);
+ 	/* the status bits we poll follow these enables; the interrupt itself stays masked at the GIC */
+ 	wr(SE_IRQ_EN, rd(SE_IRQ_EN) | 0xf);
+-	wr(GENI_M_IRQ_EN, rd(GENI_M_IRQ_EN) | 0x7fc0007f);
++	if (geni_use_dma) {
++		wr(GENI_M_IRQ_EN, (rd(GENI_M_IRQ_EN) | 0x7fc0007f) & ~(M_CMD_DONE | (1u << 26) | (1u << 27) | (1u << 30)));
++		wr(GENI_DMA_MODE_EN, rd(GENI_DMA_MODE_EN) | 1u);
++	} else {
++		wr(GENI_M_IRQ_EN, rd(GENI_M_IRQ_EN) | 0x7fc0007f);
++		wr(GENI_DMA_MODE_EN, rd(GENI_DMA_MODE_EN) & ~1u);
++	}
+ 
+ 	/* mode 0, chip select 0, 8 bits, most significant first, four bytes in a FIFO word */
+ 	wr(SPI_LOOPBACK, 0);
+@@ -513,9 +744,19 @@
+ 	wr(GENI_BYTE_GRAN, 0);
+ 	wr(SPI_WORD_LEN, 8 - 4);
+ 
+-	divider = (se_source_hz + hz - 1) / hz;
++	uint64_t denom = (uint64_t)oversampling * hz;
++	divider = (uint32_t)((se_source_hz + denom - 1) / denom);
++	if (divider < 1) {
++		divider = 1;
++	}
++	if (divider > 0xfffu) {
++		divider = 0xfffu;
++	}
+ 	wr(GENI_CLK_SEL, se_clock_select & 7);
+-	wr(GENI_SER_M_CLK_CFG, (divider ? divider : 1) << 4 | 1);
++	wr(GENI_SER_M_CLK_CFG, divider << 4 | 1);
++	geni_actual_hz = se_source_hz / (oversampling * divider);
++	printf("goodix: %s ready (sclk=%u sel=%u div=%u spi=%u fifo=%u if_dis=%u)\n",
++	    spi_transport_name, se_source_hz, se_clock_select, divider, geni_actual_hz, fifo_depth, if_dis);
+ 	return NULL;
+ }
+ 
+@@ -567,12 +808,102 @@
+ 
+ /* One transfer with the chip selected throughout: `length` bytes out (zeros without tx) and as many in. */
+ static bool
++geni_transfer_dma(const uint8_t *tx, uint8_t *rx, uint32_t length)
++{
++	static unsigned complaints;
++	uint32_t ts = 0, rs = 0, ms = 0;
++	uint64_t deadline;
++
++	if (!length || length > sizeof(geni_dma_buf.tx)) {
++		return false;
++	}
++	for (int i = 0; rd(GENI_STATUS) & 1; i++) {
++		if (i > 2000) {
++			geni_recover();
++			break;
++		}
++		sleep_us(100);
++	}
++	if (tx) {
++		memcpy(geni_dma_buf.tx, tx, length);
++		dma_cache(geni_dma_buf.tx, length, 1);
++		wr(SPI_TX_TRANS_LEN, length);
++	}
++	if (rx) {
++		memset(geni_dma_buf.rx, 0x5a, length);
++		dma_cache(geni_dma_buf.rx, length, 0);
++		wr(SPI_RX_TRANS_LEN, length);
++	}
++	wr(GENI_M_IRQ_CLEAR, 0xffffffff);
++	wr(SE_DMA_TX_IRQ_CLR, 0xffffffff);
++	wr(SE_DMA_RX_IRQ_CLR, 0xffffffff);
++	wr(GENI_M_CMD0, (tx && rx) ? SPI_FULL_DUPLEX : SPI_TX_ONLY);
++	if (rx) {
++		wr(SE_DMA_RX_IRQ_EN_SET, GENI_DMA_DONE | (1u << 1) | GENI_DMA_AHB_ERR);
++		wr(SE_DMA_RX_PTR_L, (uint32_t)geni_dma_rx_phys);
++		wr(SE_DMA_RX_PTR_H, (uint32_t)(geni_dma_rx_phys >> 32));
++		wr(SE_DMA_RX_ATTR, 0);
++		wr(SE_DMA_RX_LEN, length);
++	}
++	if (tx) {
++		wr(SE_DMA_TX_IRQ_EN_SET, GENI_DMA_DONE | (1u << 1) | GENI_DMA_AHB_ERR);
++		wr(SE_DMA_TX_PTR_L, (uint32_t)geni_dma_tx_phys);
++		wr(SE_DMA_TX_PTR_H, (uint32_t)(geni_dma_tx_phys >> 32));
++		wr(SE_DMA_TX_ATTR, GENI_DMA_TX_ATTR_EOT);
++		wr(SE_DMA_TX_LEN, length);
++	}
++	bool tx_done = !tx, rx_done = !rx;
++	clock_interval_to_deadline(200, NSEC_PER_MSEC, &deadline);
++	while (mach_absolute_time() < deadline) {
++		ts = tx ? rd(SE_DMA_TX_IRQ_STAT) : 0;
++		rs = rx ? rd(SE_DMA_RX_IRQ_STAT) : 0;
++		ms = rd(GENI_M_IRQ_STATUS);
++		if (ts) {
++			wr(SE_DMA_TX_IRQ_CLR, ts);
++		}
++		if (rs) {
++			wr(SE_DMA_RX_IRQ_CLR, rs);
++		}
++		if (ms) {
++			wr(GENI_M_IRQ_CLEAR, ms);
++		}
++		if ((ts & GENI_DMA_AHB_ERR) || (rs & GENI_DMA_AHB_ERR) || (ms & M_ERRORS)) {
++			break;
++		}
++		if (ts & GENI_DMA_DONE) {
++			tx_done = true;
++		}
++		if (rs & GENI_DMA_DONE) {
++			rx_done = true;
++		}
++		if (tx_done && rx_done) {
++			if (rx) {
++				dma_cache(geni_dma_buf.rx, length, 0);
++				memcpy(rx, geni_dma_buf.rx, length);
++			}
++			return true;
++		}
++		sleep_us(1);
++	}
++	if (complaints++ < 8) {
++		printf("goodix: DMA SPI transfer of %u bytes failed: m=%#x tx=%#x rx=%#x\n", length, ms, ts, rs);
++	}
++	geni_recover();
++	wr(SE_DMA_TX_FSM_RST, 1);
++	wr(SE_DMA_RX_FSM_RST, 1);
++	return false;
++}
++
++static bool
+ geni_transfer(const uint8_t *tx, uint8_t *rx, uint32_t length)
+ {
+ 	static unsigned complaints;
+ 	uint32_t sent = 0, received = 0, status = 0;
+ 	uint64_t deadline;
+ 
++	if (geni_use_dma) {
++		return geni_transfer_dma(tx, rx, length);
++	}
+ 	for (int i = 0; rd(GENI_STATUS) & 1; i++) {
+ 		if (i > 2000) {
+ 			geni_recover();
+@@ -656,7 +987,7 @@
+ 
+ #define GOODIX_FW_VERSION       0x10014         /* 28 bytes */
+ #define GOODIX_IC_INFO          0x10070         /* a 16-bit length, then that many bytes */
+-#define GOODIX_MAX_READ         4096    /* config packages and THP difference frames run past 1K */
++#define GOODIX_MAX_READ         4000    /* config packages and THP frames; fits inside one 4K DMA page */
+ #define GOODIX_MAX_TOUCHES      10
+ #define GOODIX_STATUS_TOUCH     0x80
+ #define GOODIX_STATUS_REQUEST   0x40
+@@ -1248,8 +1579,8 @@
+ 	goodix_report(report + 8, count);
+     uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time()-touch_frame_time,&ns);
+     const uint64_t us=ns/1000;touch_latency_total+=us;if(us>touch_latency_max)touch_latency_max=us;
+-    if(!(++touch_latency_count&255u))printf("Diting touch latency: reports=%u irq=%u spurious=%u read_mean_us=%llu read_max_us=%llu IRQ=%u\n",
+-        touch_latency_count,touch_irqs,touch_spurious,touch_latency_total/touch_latency_count,touch_latency_max,touch_irq_armed);
++    if(!(++touch_latency_count&255u))printf("Diting touch latency: reports=%u irq=%u spurious=%u read_mean_us=%llu read_max_us=%llu IRQ=%u spi=%s/%u\n",
++        touch_latency_count,touch_irqs,touch_spurious,touch_latency_total/touch_latency_count,touch_latency_max,touch_irq_armed,spi_transport_name,geni_actual_hz);
+ }
+ 
+ 
+@@ -1257,15 +1588,19 @@
+ static bool
+ bring_up(void)
+ {
++    uint32_t spi_hz = 8000000;
++    PE_parse_boot_argn("diting_touch_hz", &spi_hz, sizeof(spi_hz));
++    if (spi_hz < 1000000) spi_hz = 1000000;
++    if (spi_hz > 12000000) spi_hz = 12000000;
+     gpio_output(PIN_RESET,true,PULL_UP,6);
+     gpio_configure(PIN_INT,0,PULL_UP,6,false);
+-    if (clocks_on()) {
+-        const char *problem=geni_spi_init(4000000);
++    if (clocks_on(spi_hz)) {
++        const char *problem=geni_spi_init(spi_hz);
+         if (!problem) {
+             gpio_configure(PIN_MISO,1,PULL_NONE,6,false);
+             gpio_configure(PIN_MOSI,1,PULL_NONE,6,false);
+             gpio_configure(PIN_CLK,1,PULL_NONE,6,false);
+-            gpio_configure(PIN_CS,1,PULL_NONE,6,false);
++            gpio_configure(PIN_CS,1,PULL_UP,6,false);
+             spi_transfer=geni_transfer;
+             if (goodix_probe(false)) return true;
+             if (io_supply_on()) { touch_reset();if (goodix_probe(true)) return true; }
+@@ -1334,13 +1669,16 @@
+         thread_terminate(current_thread());return;
+     }
+     if (!diting_touch_device_ready()) {thread_terminate(current_thread());return;}
+-    printf("Diting touch: Berlin-D ready, SPI 0x%llx GPIO reset=%u irq=%u, axes %ux%u\n",
+-        se_phys,PIN_RESET,PIN_INT,max_x,max_y);
++    printf("Diting touch: Berlin-D ready, SPI 0x%llx (%s/%u Hz) GPIO reset=%u irq=%u, axes %ux%u\n",
++        se_phys,spi_transport_name,geni_actual_hz,PIN_RESET,PIN_INT,max_x,max_y);
+     touch_irq_armed=arm_touch_irq();
+     printf("Diting touch: IRQ240 GPIO21 falling-edge=%u; bounded polling fallback retained\n",touch_irq_armed);
++    uint32_t use_thp = 0;
++    PE_parse_boot_argn("diting_touch_thp",&use_thp,sizeof(use_thp));
++    PE_parse_boot_argn("diting-touch-thp",&use_thp,sizeof(use_thp));
+     PE_parse_boot_argn("diting-touch-thr",&thp_thr,sizeof(thp_thr));
+     PE_parse_boot_argn("diting-touch-map",&thp_map,sizeof(thp_map));
+-    if (frame_address && thp_tx >= 4 && thp_rx >= 4 &&
++    if (use_thp == 1 && frame_address && thp_tx >= 4 && thp_rx >= 4 &&
+         (uint32_t)thp_tx * thp_rx <= THP_NODES_MAX &&
+         frame_skip + 8 + (uint32_t)thp_tx * thp_rx * 2 <= GOODIX_MAX_READ) {
+         const uint8_t diff = 0x82, zero = 0;
+@@ -1349,14 +1687,28 @@
+         printf("goodix: THP mode %u; matrix %ux%u frame %#x skip %u thr %u\n",
+             thp_mode, thp_tx, thp_rx, frame_address, frame_skip, thp_thr);
+     } else {
+-        printf("goodix: THP unavailable (frame %#x matrix %ux%u); coordinate reports only\n",
+-            frame_address, thp_tx, thp_rx);
++        printf("goodix: coordinate mode active (thp_req=%u frame=%#x matrix=%ux%u)\n",
++            use_thp, frame_address, thp_tx, thp_rx);
+     }
+     unsigned idle=0, thp_wait=0;
++    uint32_t thp_irq_base = touch_irqs;
+     for (;;) {
+         if (thp_mode) {
++            const uint64_t irq_stamp = __atomic_exchange_n(&touch_irq_time, 0, __ATOMIC_ACQ_REL);
++            const uint64_t t0 = mach_absolute_time();
++            touch_frame_time = irq_stamp ? irq_stamp : t0;
+             int fr = thp_frame();
+             if (fr > 0) {
++                uint64_t ns = 0;
++                absolutetime_to_nanoseconds(mach_absolute_time() - t0, &ns);
++                const uint64_t us = ns / 1000;
++                touch_latency_total += us;
++                if (us > touch_latency_max) touch_latency_max = us;
++                if (!(++touch_latency_count & 255u)) {
++                    printf("Diting touch THP latency: frames=%u irq=%u read_mean_us=%llu read_max_us=%llu spi=%s/%u\n",
++                        thp_frames, touch_irqs, touch_latency_total / touch_latency_count,
++                        touch_latency_max, spi_transport_name, geni_actual_hz);
++                }
+                 thp_wait = 0;
+                 thp_process();
+             } else if (fr < 0) {
+@@ -1370,9 +1722,14 @@
+                 (void)goodix_send_cmd(0x90, &coord, 1);
+                 thp_mode = 0;
+             }
++            if (thp_mode) {
++                bool irq_drives_thp = touch_irq_armed && (touch_irqs != thp_irq_base);
++                touch_wait(irq_drives_thp ? 8 : 2);
++                continue;
++            }
+         }
+         if (__atomic_load_n(&touch_pending,__ATOMIC_ACQUIRE)||!gpio_get(PIN_INT)||++idle>=10) {idle=0;goodix_poll();}
+-        touch_wait(touch_irq_armed?8:2);
++        touch_wait(!gpio_get(PIN_INT) ? 1 : (touch_irq_armed ? 8 : 2));
+     }
+ }
+ 

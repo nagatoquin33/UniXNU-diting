@@ -111,8 +111,8 @@
     }
   },
   "power": {
-    "active_tcs": 4,
-    "serialized_with": "DitingPlatformResources / APSS active TCS4",
+    "active_tcs": 1,
+    "serialized_with": "DitingPlatformResources / APSS active TCS1, falls back to TCS2/TCS0 when busy",
     "gpu_tcs": 3,
     "cpu_governor_implemented": true,
     "cpu_policy_boot_argument": "diting_cpu_policy",

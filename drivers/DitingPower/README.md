@@ -25,7 +25,7 @@ Diting 专属实现。协议与服务结构参照 UniXNU-sheng 的 Qualcomm 实�
 
 - `DitingAdsp.cpp`：手机自身 signed ADSP 固件、PAS1、40 MiB 预留内存、SMP2P、GLINK、ready/fatal 通知和有界等待。
 - 实际 SMEM `80900000/200000`、TCSR mutex3 `1f43000`、IPCC `ed18000` / INTID261、AOSS `c300000`。不使用 Sheng 的 SM8550 IPCC、固件或 PAS36 DTB。
-- 通过 `gPhysBase/gPhysSize` 检查 DarwinBoot 实际 RAM 所有权；若覆盖 ADSP carveout，停止加载，不覆盖 XNU RAM。
+- 原厂设备树的 ADSP 保留区为 0x9fd00000，大小 0x03100000。加载前用 pmap_has_managed_page 核对与所有 XNU RAM 段的重叠。默认固件从 /diting/firmware/adsp.mbn 读取，也可由本地 addon 安装到 /private/var/ngpu/firmware/adsp.mbn，再通过 diting_adsp-fw=/private/var/ngpu/firmware 选择。两条路径均经 PAS1 硬件认证。
 - 电源请求与 WLAN 共用 APSS active TCS4 的 IOLock；GPU 的 active TCS3 保持独立。只保留启动 minima，不在 handover 时降掉共享电源投票。
 - `DitingBattery.cpp` / `ShengBattmgr.c`：沿用 UniXNU 协议 API，以 NothingOSS `qti_battery_charger.c` 的单电池属性编号解码；不访问 Xiaomi BOARD_GET 扩展、不写充电限值。
 - `DitingAudio.cpp`：`adsp_apps`、APM speaker/playback graph、TFA9873 配置、独立 SID1801 DMA 和输出环；只有真实初始化完成才发布 `DitingAudio`。尚无真机播放成功记录。

@@ -1,0 +1,126 @@
+--- a/bsd/dev/diting_buttons.c
++++ b/bsd/dev/diting_buttons.c
+@@ -1,12 +1,16 @@
+ /* Diting SM8475 PMIC keys. Read-only peripheral access, adapted from the earlier
+  * redwood_buttons.c (APSL 2.0) and NothingOSS spmi-pmic-arb.c register layouts.
+- * No PMIC configuration/reset/supply writes and no display/GPU dependency. */
++ * No PMIC configuration/reset/supply writes and no display/GPU dependency.
++ * A long power-key press powers the SoC off through PSCI SYSTEM_OFF; the PSCI
++ * call goes through the same SMCCC SMC conduit the firmware serves to the
++ * reference BootReset code. */
+ #include <pexpert/arm64/board_config.h>
+ #if defined(DITING)
+ #include <kern/clock.h>
+ #include <kern/thread.h>
+ #include <kern/sched_prim.h>
+ #include <libkern/libkern.h>
++#include <machine/machine_routines.h>
+ #include <pexpert/device_tree.h>
+ #include <pexpert/pexpert.h>
+ #include <sys/diting_input.h>
+@@ -25,8 +29,22 @@
+ struct key {bool usable,live,last,down;uint32_t code;};
+ static struct key keys[3]={{.code=DITING_BUTTON_POWER},{.code=DITING_BUTTON_VOLUME_UP},
+     {.code=DITING_BUTTON_VOLUME_DOWN}};
++/* Power-key hold handling: diting_pwrkey_long (ms, default 5000) and
++ * diting_pwrkey_log=1 for raw RT_STS transitions. */
++static uint32_t pwrkey_log,pwrkey_long_ms=5000,pwrkey_last_state;
++static uint64_t pwrkey_down_at;
++static bool pwrkey_off_failed;
+ static uint32_t rd(vm_offset_t a) {return *(volatile uint32_t *)a;}
+ static void wr(vm_offset_t a,uint32_t v) {*(volatile uint32_t *)a=v;__asm__ volatile("dsb sy":::"memory");}
++/* One SMCCC call through SMC: PSCI VERSION 0x84000000, FEATURES 0x8400000a,
++ * SYSTEM_OFF 0x84000008. Returns x0. */
++static uint64_t diting_psci(uint64_t fn,uint64_t arg)
++{
++    register uint64_t x0 __asm__("x0")=fn,x1 __asm__("x1")=arg,x2 __asm__("x2")=0,x3 __asm__("x3")=0;
++    __asm__ volatile("smc #0":"+r"(x0),"+r"(x1),"+r"(x2),"+r"(x3)
++        ::"memory","x4","x5","x6","x7","x8","x9","x10","x11","x12","x13","x14","x15","x16","x17");
++    return x0;
++}
+ 
+ static bool property(DTEntry e,const char *name,void *out,unsigned size)
+ {
+@@ -148,6 +166,19 @@
+     printf("Diting keys: owned PMIC interrupts on SPI481; coherent consumer transitions\n");
+     return true;
+ }
++/* Long press of the power key: ask the firmware to power the SoC off. A return
++ * is an error, not a shutdown: keep running and only retry after a release. */
++static void pwrkey_poweroff(void)
++{
++    uint64_t version=diting_psci(0x84000000u,0),feature=diting_psci(0x8400000au,0x84000008u);
++    printf("Diting pwrkey: power held %u ms; PSCI v%llu SYSTEM_OFF feature=%lld\n",
++        pwrkey_long_ms,(unsigned long long)version,(long long)feature);
++    ml_set_interrupts_enabled(false);
++    uint64_t result=diting_psci(0x84000008u,0);
++    pwrkey_off_failed=true;
++    ml_set_interrupts_enabled(true);
++    printf("Diting pwrkey: PSCI SYSTEM_OFF returned %llu; still running\n",(unsigned long long)result);
++}
+ static void look(struct key *k,bool down)
+ {
+     bool steady=k->last==down;k->last=down;
+@@ -155,6 +186,10 @@
+     if (!k->live) {if (!down) k->live=true;return;}
+     if (k->down==down) return;
+     k->down=down;
++    if (k->code==DITING_BUTTON_POWER) {
++        if (down) pwrkey_down_at=mach_absolute_time();
++        else {pwrkey_down_at=0;pwrkey_off_failed=false;}
++    }
+     diting_touch_post(down?DITING_BUTTON_DOWN:DITING_BUTTON_UP,k->code,0,0);
+     printf("Diting keys: %u %s\n",k->code,down?"down":"up");
+ }
+@@ -176,6 +211,7 @@
+         read_registers(&pon,0x10,&state,1)) {
+         keys[0].usable=keys[2].usable=true;
+         keys[0].last=(state&0x80)!=0;keys[2].last=(state&0x40)!=0;
++        pwrkey_last_state=state;
+     }
+     if (read_registers(&pin,4,id,2) && id[0]==0x10 && id[1]>=0x10 && id[1]<=0x13 &&
+         read_registers(&pin,0x40,c,8) && (c[0]&3)==0 && (c[2]&7)<4 && (c[6]&0x80) &&
+@@ -188,6 +224,7 @@
+     for (unsigned i=0;i<3;i++) keys[i].live=keys[i].usable && !keys[i].last;
+     printf("Diting keys: arbiter v%u channels=%u PON=%u GPIO6=%u; power=%u up=%u down=%u\n",
+         v7?7:5,channels,pon.channel,pin.channel,keys[0].usable,keys[1].usable,keys[2].usable);
++    printf("Diting pwrkey: long=%u ms log=%u\n",pwrkey_long_ms,pwrkey_log);
+     irq_mode=enable_irqs();
+     unsigned failures=0,irq_burst=0;uint64_t irq_window=mach_absolute_time();
+     for (;;) {
+@@ -200,6 +237,11 @@
+         }
+         if (keys[0].usable) {
+             if (read_registers(&pon,0x10,&state,1)) {
++                if (pwrkey_log && state!=pwrkey_last_state) {
++                    pwrkey_last_state=state;
++                    printf("Diting pwrkey: rt_sts %#x down=%u up=%u vol=%u\n",
++                        state,keys[0].down,keys[1].down,keys[2].down);
++                }
+                 look(&keys[0],(state&0x80)!=0);look(&keys[2],(state&0x40)!=0);
+             } else good=false;
+         }
+@@ -207,6 +249,10 @@
+             if (read_registers(&pin,0x10,&state,1)) look(&keys[1],(state&1)==0);
+             else good=false;
+         }
++        if (keys[0].usable && keys[0].down && pwrkey_down_at && !pwrkey_off_failed) {
++            uint64_t held=0;absolutetime_to_nanoseconds(mach_absolute_time()-pwrkey_down_at,&held);
++            if (held>=(uint64_t)pwrkey_long_ms*NSEC_PER_MSEC) pwrkey_poweroff();
++        }
+         failures=good?0:failures+1;
+         if (failures>=8) {
+             for (unsigned i=0;i<3;i++) if (keys[i].down)
+@@ -239,8 +285,11 @@
+ 
+ void diting_buttons_init(void)
+ {
+-    uint32_t enabled=0;thread_t t;
++    uint32_t enabled=0,long_ms=0,log=0;thread_t t;
+     if (!PE_parse_boot_argn("diting_buttons",&enabled,sizeof(enabled)) || !enabled) return;
++    if (PE_parse_boot_argn("diting_pwrkey_long",&long_ms,sizeof(long_ms)) && long_ms>=500)
++        pwrkey_long_ms=long_ms;
++    if (PE_parse_boot_argn("diting_pwrkey_log",&log,sizeof(log))) pwrkey_log=log;
+     if (kernel_thread_start(keys_thread,NULL,&t)==KERN_SUCCESS) thread_deallocate(t);
+ }
+ #endif

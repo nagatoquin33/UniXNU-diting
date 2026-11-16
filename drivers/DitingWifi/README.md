@@ -5,7 +5,7 @@ Diting 的 QCA6490 Wi-Fi 传输：PCIe0 + MHI + QRTR/QMI 上的真实 ath11k，�
 ## 适配硬件
 
 - SM8475 / QCA6490：PCIe0（`wlan-enable` GPIO80、reset GPIO94、clkreq GPIO95、wake GPIO96、xo-clk GPIO204）
-- MHI + QRTR + QMI；APSS DRV2 用 Diting DT 的 active TCS4，保留 GPU 的 TCS3
+- MHI + QRTR + QMI；供电请求使用 Diting APSS DRV2 的活动 TCS1，与 ADSP 共用同一把锁。
 - MSI 接收器按 DT `int_global_int` 路由到 SPI140（GIC INTID172），PARF MSI0 为 bit23
 - 独立 SMMU context，SID `0x1c01`；固件 `amss.bin`、`m3.bin`、`bdwlan*`、`regdb.bin` 取自本机 modem 的 `image/qca6490`
 
@@ -31,7 +31,20 @@ Diting 专属实现；`ath11k/` 是 Linux v7.0.14 ath11k 的 PCI/MHI/QMI 部分�
 - `scripts/build-diting-wifi-native.py`：编译板级/网络代码，合并归档并延后注册网络类。
 - `CONFIG_XNU_DITING_WIFI=y`：构建并链接归档；`diting_wifi=1` 启动板级工作线程。
 
-APSS DRV2 使用 Diting DT 的 active TCS4，保留 GPU 的 TCS3。使用 SM8475 GCC
+`diting_wifi` 支持分级冷启动二分（用于在无声复位前定位挂死阶段；每级都
+打印 `staged stop` 标记并返回正常启动路径）：
+
+- `=2`：WLAN 电源轨 RPMh 投票完成后停止（不写 GCC/PCIe；每条轨投票前打印轨名）
+- `=7`：WLAN_EN/XO latch GPIO 断言后停止（GCC 首写前）
+- `=8`：PCIe0 GDSC 上电完成后停止（时钟配置前）
+- `=9`：PCIe0 时钟分支全部就绪后停止（BCR 复位前）
+- `=3`：PCIe0 双复位完成后停止（PARF 首次访问前）
+- `=4`：PHY 表 + LTSSM 链路训练完成后停止（ATU/端点配置空间前）
+- `=5`：`coldLink()` 全部完成（含 BAR）后停止（SMMU 隔离前）
+- `=6`：SMMU context 与 DMA arena 就绪后停止（MSI/ath11k 前）
+- `=1` 或其它非零值：完整启动（PCIe + SMMU + MHI/QMI + 固件 + station）
+
+APSS DRV2 把 TCS0–2 配为活动槽。触控使用 TCS0，Wi-Fi 与 ADSP 共享 TCS1。使用 SM8475 GCC
 `0x7bxxx`、真实 PHY 表和 cmd-db `SN7` 带宽投票。CPU 和 SMMU 的 DMA 环使用
 Normal-NC，页表独立保留。使用 DesignWare 控制器的 MSI 接收器，按 Diting DT
 `int_global_int` 路由到 SPI140（GIC INTID172）；PARF MSI0 为 bit23。

@@ -271,7 +271,14 @@ def main():
         ('cmd-db-base', struct.pack('<Q', 0x80860000)),
         ('gpio-offset', struct.pack('<I', 0x100000)),
         ('pins', struct.pack('<6I', 16, 17, 18, 19, 21, 20)),
-        ('max-x', struct.pack('<I', 1080)), ('max-y', struct.pack('<I', 2412)),
+        # Vendor panel report space (dts/diting.dts goodix,panel-max-*):
+        # 12200x27120 = 10x the 1220x2712 display axes the chip misc reports.
+        ('max-x', struct.pack('<I', 12200)), ('max-y', struct.pack('<I', 27120)),
+        # Berlin-D never scans without a panel config. The vendor cfg group
+        # (goodix_cfg_group_l12) stays local like other firmware blobs; set
+        # DITING_GOODIX_CFG_BIN to a {64B head + cfg} blob and it rides the ADT.
+        *([('goodix,cfg-data', Path(os.environ['DITING_GOODIX_CFG_BIN']).read_bytes())]
+          if os.environ.get('DITING_GOODIX_CFG_BIN') else []),
     ])
     tree = node('device-tree', [
         # Keys use the actual SM8475 PMIC-arbiter resources below.

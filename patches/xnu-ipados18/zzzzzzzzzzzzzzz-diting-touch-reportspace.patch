@@ -1,0 +1,18 @@
+--- a/bsd/dev/diting_goodix.c
++++ b/bsd/dev/diting_goodix.c
+@@ -742,11 +742,12 @@
+ 	command_address = le32(info + offset + 0);      /* (the "misc" part: the command buffer comes first) */
+ 	fw_buffer_address = le32(info + offset + 18);   /* where a config package is staged */
+ 	fw_buffer_max_len = le16(info + offset + 22);
+ 	ic_config_id = le32(info + 6);                  /* ic_info_version.config_id (version+4) */
+-    /* Diting vendor misc ABI: +48 header, +50 point size, +52/+54 real axes. */
++    /* Vendor misc +52/+54 are display-space axes (1220x2712). Touch reports
++     * arrive in the vendor panel space (dts goodix,panel-max-*: 12200x27120),
++     * which the DT max-x/max-y carries; keep DT authoritative. */
+     if (offset+56+2 > length || le16(info+offset+48)!=8 || le16(info+offset+50)!=8) return false;
+     uint16_t x=le16(info+offset+52), y=le16(info+offset+54);
+-    if (x && y) { max_x=x;max_y=y; }
+-	printf("goodix: touch report at %#x, coordinates up to %u x %u\n", touch_address, max_x, max_y);
++	printf("goodix: touch report at %#x, display axes %u x %u, report space %u x %u\n", touch_address, x, y, max_x, max_y);
+ 	return touch_address != 0;
+ }

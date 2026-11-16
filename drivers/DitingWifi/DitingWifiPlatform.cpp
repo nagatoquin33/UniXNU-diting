@@ -34,6 +34,9 @@ bool diting_ufs_ready(void);
 extern const uint8_t diting_wifi_firmware[], diting_wifi_firmware_end[];
 }
 extern kmod_info_t g_kernel_kmod_info;
+extern "C" int native_ufs_debug_write(uint64_t,uint32_t,const void *) __attribute__((weak_import));
+extern "C" vm_offset_t diting_ramoops_mapped_base(void);
+extern "C" uint32_t diting_ramoops_zone_size(unsigned);
 namespace {
 #include "../NativeUfs/SmmuTakeover.h"
 constexpr uint64_t Iova=0xa0000000;
@@ -56,9 +59,16 @@ unsigned pmicChannels;
 IOBufferMemoryDescriptor *arena,*tables,*msiPage;
 uint8_t *arenaVa; uint64_t tablePa,msiPa; uint64_t cbOffset;
 unsigned pcieCap,msiCap; volatile uint32_t stopped,wake; bool dmaOwned,hostMmioReady;
+unsigned stageLimit=1;
 uint64_t initDeadline;
 uint64_t now() {uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);return ns/1000000;}
-void log(int level,const char *s) {if(level<7)IOLog("DitingWifi[%d]: %s\n",level,s);}
+void forceFlush() {
+ if(!native_ufs_debug_write)return;vm_offset_t b=diting_ramoops_mapped_base();
+ if(!b)return;
+ uint32_t blocks=(diting_ramoops_zone_size(0)+16+4095)/4096;if(blocks>512)blocks=512;
+ if(blocks)native_ufs_debug_write(0,blocks,reinterpret_cast<const void *>(b));
+}
+void log(int level,const char *s) {if(level<7){IOLog("DitingWifi[%d]: %s\n",level,s);forceFlush();}}
 bool fail(const char *s) {log(3,s);return false;}
 void clean(void *p,size_t n) {uintptr_t a=reinterpret_cast<uintptr_t>(p)&~uintptr_t(63),e=reinterpret_cast<uintptr_t>(p)+n;for(;a<e;a+=64)__asm__ volatile("dc civac,%0"::"r"(a):"memory");__asm__ volatile("dsb sy":::"memory");}
 bool wait(Window &w,size_t o,uint32_t mask,uint32_t value,unsigned ms) {uint64_t end=now()+ms;do {if((w.r(o)&mask)==value)return true;IOSleep(1);}while(now()<end);return false;}
@@ -156,27 +166,44 @@ bool bcmVote(const uint8_t *copy,const char *name) {
  }return fail("PCIe NoC SN7 cmd-db resource absent");
 }
 bool supplies() {
- if(!pmicOpen()||!db.open(0x80860000,0x20000))return false;
+ log(6,"supplies: pre-pmicOpen");
+ if(!pmicOpen())return fail("supplies: pmicOpen failed");
+ log(6,"supplies: pmic open, pre cmddb map");
+ if(!db.open(0x80860000,0x20000))return fail("supplies: cmd-db map failed");
+ log(6,"supplies: cmd-db mapped, copying");
  uint8_t *copy=static_cast<uint8_t *>(IOMallocData(0x20000));if(!copy)return false;
  for(unsigned i=0;i<0x20000;i+=4){unsigned v=db.r(i);memcpy(copy+i,&v,4);}
+ log(6,"supplies: cmd-db copied, voting rails");
  bool ok=true;
  for(const auto &r:kDitingWifiRails) {QcomRpmhResource res={};if(qcom_cmd_db_find(copy,0x20000,r.name,&res)){ok=fail("required SM8475 rail missing in cmd-db");break;}
+  {char nm[24];snprintf(nm,sizeof nm,"rail %s a=%x",r.name,res.address);log(6,nm);}
+  forceFlush();
   // These are dedicated WLAN supplies, retained until endpoint reset. Their
   // minimum setpoints and maximum bounds are taken from this phone's DT.
-  if(!diting_rpmh_vote(res.address+8,7)||!diting_rpmh_vote(res.address,r.mv)||!diting_rpmh_vote(res.address+4,1)){ok=false;break;}
+  if(!diting_rpmh_vote(res.address+8,7)){log(3,"rail vote hi failed");ok=false;break;}
+  {char nm[24];snprintf(nm,sizeof nm,"rail %s mid",r.name);log(6,nm);}
+  forceFlush();
+  if(!diting_rpmh_vote(res.address,r.mv)){log(3,"rail vote mid failed");ok=false;break;}
+  {char nm[24];snprintf(nm,sizeof nm,"rail %s lo",r.name);log(6,nm);}
+  forceFlush();
+  if(!diting_rpmh_vote(res.address+4,1)){ok=false;break;}
+  {char nm[24];snprintf(nm,sizeof nm,"rail %s lo done",r.name);log(6,nm);}
   if(!railReady(r)){ok=fail("physical WLAN supply did not follow RPMh request");break;}
+  {char nm[24];snprintf(nm,sizeof nm,"rail %s done",r.name);log(6,nm);}
  }
  // Retain the actual highest allowed ARC parent votes, as the GPU owner
  // does; never lower a shared CX/MX vote inherited from another consumer.
  const char *parents[]={"mx.lvl","cx.lvl"};
- for(const char *name:parents)if(ok){QcomRpmhResource res={};if(qcom_cmd_db_find(copy,0x20000,name,&res)||!res.level_count){ok=false;break;}unsigned index=0;for(unsigned i=1;i<res.level_count;i++)if(res.levels[i]>res.levels[index])index=i;ok=diting_rpmh_vote(res.address,index);}
+ for(const char *name:parents)if(ok){log(6,name);forceFlush();QcomRpmhResource res={};if(qcom_cmd_db_find(copy,0x20000,name,&res)||!res.level_count){ok=false;break;}unsigned index=0;for(unsigned i=1;i<res.level_count;i++)if(res.levels[i]>res.levels[index])index=i;ok=diting_rpmh_vote(res.address,index);}
+ forceFlush();
  // The actual PCIe ref_clk_src is RPMH_CXO_CLK, not just GCC CLKREF_EN.
  // clk-rpmh.c waipio_bi_tcxo votes xo.lvl=3 while this consumer is active.
- if(ok){QcomRpmhResource xo={};ok=!qcom_cmd_db_find(copy,0x20000,"xo.lvl",&xo)&&diting_rpmh_vote(xo.address,3);}
- if(ok)ok=bcmVote(copy,"SN7");
+ if(ok){log(6,"supplies: parents done, xo.lvl");forceFlush();QcomRpmhResource xo={};ok=!qcom_cmd_db_find(copy,0x20000,"xo.lvl",&xo)&&diting_rpmh_vote(xo.address,3);}
+ if(ok){log(6,"supplies: pre SN7 bcm");forceFlush();ok=bcmVote(copy,"SN7");}
  IOFreeData(copy,0x20000);if(ok)log(6,"SM8475 WLAN rail requests acknowledged");return ok;
 }
 bool coldLink() {
+ log(6,"coldLink: pre-map");
  if(!gcc.open(0x100000,0xa0000)||!tlmm.open(0xf100000,0xd0000))return false;
  // REC leaves PCIe0 suspended. Only GCC/TLMM are accessible at this point:
  // even an LTSSM read from PARF can cause a NoC fault while GDSC/AHB is off.
@@ -184,14 +211,18 @@ bool coldLink() {
  // regulator/clock/reset sequence has completed.
  log(6,"PCIe0 cold start; power and bus clocks precede host MMIO");
  pin(94,1u|1u<<9,0);pin(95,3u|1u<<2,-1);pin(96,3u,-1);
+ log(6,"coldLink: reset/clkreq pins done, pre WLAN_EN low");
  pin(80,1u|1u<<9,0);IOSleep(150);
+ log(6,"coldLink: pre supplies()");
  if(!supplies())return false;
  // Sheng waits after the regulator transaction before releasing WLAN_EN.
  // The response completes the RPMh request, not the board's rail settling.
  IOSleep(20);
+ if(stageLimit==2){log(6,"staged stop at 2: WLAN rails voted, no GCC/PCIe writes");return true;}
  // QCA6490 CNSS2: assert XO_CLK before WLAN_EN and keep the latch
  // asserted 2..5ms afterwards. GPIO204 is from this phone's DT.
  enableWlan();
+ if(stageLimit==7){log(6,"staged stop at 7: WLAN_EN/XO latch asserted, pre-GCC");return true;}
  // A temporary boot can inherit the previous OS's suspended PIPE mux and
  // vote. Park on the real TCXO parent with the branch disabled before
  // resetting the core. Do not clock an uninitialized PHY from its output.
@@ -203,6 +234,7 @@ bool coldLink() {
  // SM8475 has a single PCIe0 GDSC at 7b004, no SM8550 PHY GDSC.
  gcc.w(0x7b004,gcc.r(0x7b004)&~1u);
  if(!wait(gcc,0x7b004,1u<<31,1u<<31,100))return fail("PCIe0 GDSC off");
+ if(stageLimit==8){log(6,"staged stop at 8: PCIe0 GDSC on, pre-clock setup");return true;}
  // Follow the complete Sheng QMP clock sequence: keep PIPE on TCXO during
  // reset/table setup, then select the PHY output before PCS reset release.
  // Mixing an early external parent with a stopped PIPE loses that clock
@@ -224,11 +256,13 @@ bool coldLink() {
  gcc.w(0x9c004,gcc.r(0x9c004)|1);
  const unsigned branches[]={0x7b01cu,0x7b020u,0x7b028u,0x7b030u,0x7b034u};
  for(unsigned o:branches)if(!wait(gcc,o,1u<<31,0,100))return fail("PCIe clock remains halted");
+ if(stageLimit==9){log(6,"staged stop at 9: PCIe0 clocks on, pre-reset");return true;}
  reset(0x7b000);
  // Diting DT names these core_reset and phy_reset. There is no
  // pcie_0_phy_pipe_reset entry: PHY_BCR resets the programmed PCS/SERDES.
  // Complete both resets before loading the vendor PHY sequence.
  reset(0x7c01c);
+ if(stageLimit==3){log(6,"staged stop at 3: PCIe0 powered/clocked/reset, pre-PARF");return true;}
  if(!parf.open(0x1c00000,0x3000))return false;
  hostMmioReady=true;
  parf.w(0x1b0,parf.r(0x1b0)&~(1u<<8));
@@ -331,6 +365,7 @@ bool coldLink() {
   gcc.w(0x7b04c,1);gcc.w(0x7b048,gcc.r(0x7b048)|1);
   if(!wait(gcc,0x7b048,1,0,20))return fail("PCIe negotiated refgen update timeout");
  }
+ if(stageLimit==4){log(6,"staged stop at 4: PCIe0 link trained, pre-ATU/endpoint");return true;}
  // Type-1 memory aperture, as in Sheng's endpoint setup, using Diting's
  // actual 0x60200000..0x63ffffff range rather than Sheng's 0x60300000.
  dbi.w(0x20,0x63f06020);
@@ -557,7 +592,11 @@ void worker(void *,wait_result_t) {
  unsigned n=0;for(;n<180&&!diting_ufs_ready();n++)IOSleep(500);
  if(n==180){fail("UFS prerequisites absent; WiFi skipped");goto done;}
  IOSleep(2000);
- if(!coldLink()||!isolation())goto done;
+ {char m[48];snprintf(m,sizeof m,"WiFi worker armed stage=%u",stageLimit);log(6,m);}
+ if(!coldLink())goto done;
+ if(stageLimit>=2&&stageLimit<=9){log(6,"staged stop retained; boot continues without isolation/firmware");goto done;}
+ if(!isolation())goto done;
+ if(stageLimit==6){log(6,"staged stop at 6: SMMU isolation and DMA arena ready");goto done;}
  // nw_abi.h requires events before start/step. Early station completion
  // must not be lost while the board is still waiting for its hardware MAC.
  if(!diting_wifi_net_prepare()){fail("network event setup failed");goto done;}
@@ -597,7 +636,8 @@ extern "C" void diting_wifi_wake(void) {signalWorker();}
 extern "C" void native_wifi_logf(int level,const char *fmt,...) {char line[256];va_list a;va_start(a,fmt);vsnprintf(line,sizeof line,fmt,a);va_end(a);log(level,line);}
 extern "C" void diting_wifi_start_optional(void) {
  diting_rpmh_init();
- uint32_t enabled=0;if(!PE_parse_boot_argn("diting_wifi",&enabled,sizeof enabled)||enabled!=1)return;
+ uint32_t enabled=0;if(!PE_parse_boot_argn("diting_wifi",&enabled,sizeof enabled)||!enabled)return;
+ stageLimit=enabled;
  static uint32_t started;if(__atomic_exchange_n(&started,1,__ATOMIC_ACQ_REL))return;
  // These network classes are linked into the native kernel, not loaded as a
  // separate kext. Register their metaclasses before publishing any service.

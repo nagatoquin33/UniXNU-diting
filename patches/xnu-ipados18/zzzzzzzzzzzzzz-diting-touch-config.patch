@@ -1,0 +1,162 @@
+--- a/bsd/dev/diting_goodix.c
++++ b/bsd/dev/diting_goodix.c
+@@ -657,14 +657,15 @@
+ 
+ #define GOODIX_FW_VERSION       0x10014         /* 28 bytes */
+ #define GOODIX_IC_INFO          0x10070         /* a 16-bit length, then that many bytes */
+-#define GOODIX_MAX_READ         1024
++#define GOODIX_MAX_READ         2048    /* Berlin-D config packages run past 1K */
+ #define GOODIX_MAX_TOUCHES      10
+ #define GOODIX_STATUS_TOUCH     0x80
+ #define GOODIX_STATUS_REQUEST   0x40
+ #define GOODIX_REQUEST_RESET    3
+ 
+ static uint8_t spi_tx[8 + GOODIX_MAX_READ], spi_rx[8 + GOODIX_MAX_READ];
+-static uint32_t touch_address, command_address;
++static uint32_t touch_address, command_address, fw_buffer_address, ic_config_id;
++static uint16_t fw_buffer_max_len;
+ 
+ static bool
+ goodix_read(uint32_t address, uint8_t *data, uint32_t length)
+@@ -784,6 +785,9 @@
+ 	}
+ 	touch_address = le32(info + offset + 44);
+ 	command_address = le32(info + offset + 0);      /* (the "misc" part: the command buffer comes first) */
++	fw_buffer_address = le32(info + offset + 18);   /* where a config package is staged */
++	fw_buffer_max_len = le16(info + offset + 22);
++	ic_config_id = le32(info + 6);                  /* ic_info_version.config_id (version+4) */
+     /* Diting vendor misc ABI: +48 header, +50 point size, +52/+54 real axes. */
+     if (offset+56+2 > length || le16(info+offset+48)!=8 || le16(info+offset+50)!=8) return false;
+     uint16_t x=le16(info+offset+52), y=le16(info+offset+54);
+@@ -792,6 +796,97 @@
+ 	return touch_address != 0;
+ }
+ 
++/* ---- Berlin-D configuration upload -----------------------------------------------------------
++ * The controller does not scan until it holds a panel configuration (sensor 0xff).
++ * The vendor cfg group reaches the chip as a 12-byte-prefixed package written to the
++ * ic_info firmware buffer, framed by 4-byte commands at the command address; command
++ * replies carry the state machine at byte 0 and the ack at byte 1. Protocol and
++ * status values follow the goodix_9916 (Berlin-D) module shipped on this device. */
++
++#define GOODIX_CFG_CMD_LEN      4
++#define GOODIX_CFG_START_BD     0x0a    /* prepare to receive a config buffer */
++#define GOODIX_CFG_WRITE_BD     0x0b    /* the buffer holds a config: take it */
++#define GOODIX_CFG_EXIT_BD      0x0c    /* leave the config exchange */
++#define GOODIX_CFG_ACK_START_BD 0x04
++#define GOODIX_CFG_ACK_WRITE_BD 0x07
++#define GOODIX_CFG_DONE         0x80
++#define GOODIX_CFG_PKG_ADDR     0x3e000 /* where the package is staged inside the chip */
++
++static bool
++goodix_cfg_cmd(uint8_t command, uint8_t target)
++{
++	uint8_t cmd[16] = {0, 0, GOODIX_CFG_CMD_LEN, command}, reply[16] = {0};
++	uint16_t sum = cmd[2] + cmd[3];             /* the vendor's u8-mode checksum over len+command */
++
++	cmd[4] = (uint8_t)sum;
++	cmd[5] = (uint8_t)(sum >> 8);
++	for (int attempt = 0; attempt < 6; attempt++) {
++		if (!goodix_write(command_address, cmd, sizeof(cmd))) {
++			sleep_ms(1);
++			continue;
++		}
++		for (int i = 0; i < 6; i++) {           /* accepted commands ack 0x80 at byte 1 */
++			if (goodix_read(command_address, reply, sizeof(reply)) && reply[1] == GOODIX_CFG_DONE) {
++				for (i = 0; i < 20; i++) {  /* then the state machine reaches its target */
++					if (goodix_read(command_address, reply, sizeof(reply)) && reply[0] == target) {
++						return true;
++					}
++					sleep_ms(20);
++				}
++				printf("goodix: config command %#x never reached state %#x (%02x %02x)\n",
++				    command, target, reply[0], reply[1]);
++				return false;
++			}
++			sleep_ms(1);
++		}
++	}
++	printf("goodix: config command %#x not acknowledged (%02x %02x)\n", command, reply[0], reply[1]);
++	return false;
++}
++
++/* The staged package: a u32 checksum of the u16 words over {address,length,data},
++ * the 0x3e000 staging address, the payload length, then the configuration. */
++static bool
++goodix_send_config(const uint8_t *cfg, uint32_t length)
++{
++	static uint8_t pkg[12 + GOODIX_MAX_READ], back[12 + GOODIX_MAX_READ];
++	uint32_t sum = 0, total = 12 + length;
++
++	if (!length || !fw_buffer_address || length > fw_buffer_max_len || total > sizeof(pkg)) {
++		printf("goodix: config %u cannot go to %#x (max %u)\n", length, fw_buffer_address,
++		    fw_buffer_max_len);
++		return false;
++	}
++	memset(pkg, 0, total);
++	pkg[4] = 0x00; pkg[5] = 0xe0; pkg[6] = 0x03; pkg[7] = 0x00;
++	pkg[8] = (uint8_t)length; pkg[9] = (uint8_t)(length >> 8);
++	pkg[10] = (uint8_t)(length >> 16); pkg[11] = (uint8_t)(length >> 24);
++	memcpy(pkg + 12, cfg, length);
++	for (uint32_t i = 4; i + 2 <= total; i += 2) {
++		sum += le16(pkg + i);
++	}
++	pkg[0] = (uint8_t)sum; pkg[1] = (uint8_t)(sum >> 8);
++	pkg[2] = (uint8_t)(sum >> 16); pkg[3] = (uint8_t)(sum >> 24);
++	if (!goodix_cfg_cmd(GOODIX_CFG_START_BD, GOODIX_CFG_ACK_START_BD)) {
++		return false;
++	}
++	if (!goodix_write(fw_buffer_address, pkg, total) || !goodix_read(fw_buffer_address, back, total) ||
++	    memcmp(pkg, back, total)) {
++		printf("goodix: config buffer write/compare failed at %#x\n", fw_buffer_address);
++		(void)goodix_cfg_cmd(GOODIX_CFG_EXIT_BD, GOODIX_CFG_DONE);
++		return false;
++	}
++	if (!goodix_cfg_cmd(GOODIX_CFG_WRITE_BD, GOODIX_CFG_ACK_WRITE_BD)) {
++		(void)goodix_cfg_cmd(GOODIX_CFG_EXIT_BD, GOODIX_CFG_DONE);
++		return false;
++	}
++	if (!goodix_cfg_cmd(GOODIX_CFG_EXIT_BD, GOODIX_CFG_DONE)) {
++		return false;
++	}
++	printf("goodix: config uploaded (%u bytes through %#x)\n", length, fw_buffer_address);
++	return true;
++}
++
+ /* What has been seen so far: said once a minute, so that the end of the log always tells. */
+ static struct {
+ 	uint32_t polls, reports, touches, bad, last_x, last_y;
+@@ -958,6 +1053,33 @@
+         printf("Diting touch: controller did not resume after reset; SKIP\n");
+         thread_terminate(current_thread());return;
+     }
++    /* Berlin-D leaves sensor 0xff until it owns a panel config. The vendor driver
++     * uploads its cfg group when the stored config_id differs from the chip's; the
++     * blob rides the generated ADT as goodix,cfg-data (a local artifact, never
++     * committed), so its absence stays a normal unconfigured boot. */
++    {
++        DTEntry entry; void *blob = NULL; unsigned bloblen = 0;
++        if (SecureDTLookupEntry(NULL, "/arm-io/diting-touch", &entry) == kSuccess &&
++            SecureDTGetProperty(entry, "goodix,cfg-data", &blob, &bloblen) == kSuccess &&
++            blob && bloblen >= 64 && 64u + le16((const uint8_t *)blob + 59) == bloblen) {
++            uint32_t file_id = le32((const uint8_t *)blob + 30);
++            if (file_id == ic_config_id) {
++                printf("goodix: config %#x already loaded; no upload\n", file_id);
++            } else {
++                printf("goodix: config %#x for chip %#x via buffer %#x (max %u)\n", file_id,
++                    ic_config_id, fw_buffer_address, fw_buffer_max_len);
++                if (goodix_send_config(blob, bloblen)) {
++                    touch_reset();
++                    if (!goodix_probe(true)) {
++                        printf("Diting touch: controller lost after config upload; SKIP\n");
++                        thread_terminate(current_thread());return;
++                    }
++                } else {
++                    printf("goodix: config upload failed; continuing unconfigured\n");
++                }
++            }
++        }
++    }
+     const uint8_t clear=0;
+     if (!goodix_write(touch_address,&clear,1)) {
+         printf("Diting touch: cannot acknowledge resumed report; SKIP\n");

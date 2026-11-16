@@ -1,0 +1,142 @@
+--- a/bsd/dev/diting_goodix.c
++++ b/bsd/dev/diting_goodix.c
+@@ -120,6 +120,45 @@
+ 	gpio_configure(pin, 0, pull, ma, true);
+ }
+ 
++/* Actual cape TLMM summary SPI208 / GIC240, GPIO21 falling edge.
++ * IRQ only acknowledges the pin and wakes this existing SPI owner. */
++extern int armcpu_spi_attach(uint32_t,bool,void (*)(void *),void *,uint32_t *,uint64_t *) __attribute__((weak_import));
++extern kern_return_t clear_wait(thread_t,wait_result_t);
++static volatile uint32_t touch_pending,touch_irqs,touch_spurious;
++static volatile uint64_t touch_irq_time;
++static uint64_t touch_frame_time,touch_latency_total,touch_latency_max;
++static uint32_t touch_latency_count;
++static bool touch_irq_armed;
++static void touch_irq(void *unused) {
++    (void)unused;
++    if(!(rd(GPIO_CFG(PIN_INT)+12)&1)){++touch_spurious;return;}
++    wr(GPIO_CFG(PIN_INT)+12,0);
++    uint64_t empty=0,stamp=mach_absolute_time();
++    __atomic_compare_exchange_n(&touch_irq_time,&empty,stamp,false,__ATOMIC_RELEASE,__ATOMIC_RELAXED);
++    __atomic_fetch_add(&touch_irqs,1,__ATOMIC_RELAXED);
++    __atomic_store_n(&touch_pending,1,__ATOMIC_RELEASE);
++    thread_wakeup((event_t)&touch_pending);
++}
++static bool arm_touch_irq(void) {
++    if(!armcpu_spi_attach)return false;
++    uint32_t saved=rd(GPIO_CFG(PIN_INT)+8);
++    uint32_t cfg=(saved&~((7u<<5)|(3u<<2)|(1u<<1)|1u))|(3u<<5)|(1u<<2)|(1u<<4);
++    wr(GPIO_CFG(PIN_INT)+8,cfg);wr(GPIO_CFG(PIN_INT)+12,0);
++    /* no armcpu_spi_share on diting yet; SPI240 is unclaimed so exclusive
++     * attach is the whole owner set. Port share when a second TLMM summary
++     * consumer appears. */
++    int rc=armcpu_spi_attach(240,false,touch_irq,NULL,NULL,NULL);
++    if(rc){wr(GPIO_CFG(PIN_INT)+8,saved);return false;}
++    wr(GPIO_CFG(PIN_INT)+8,cfg|1);return true;
++}
++static void touch_wait(unsigned ms) {
++    if(__atomic_exchange_n(&touch_pending,0,__ATOMIC_ACQ_REL))return;
++    uint64_t deadline;clock_interval_to_deadline(ms,NSEC_PER_MSEC,&deadline);
++    assert_wait_deadline((event_t)&touch_pending,THREAD_UNINT,deadline);
++    if(__atomic_exchange_n(&touch_pending,0,__ATOMIC_ACQ_REL))clear_wait(current_thread(),THREAD_AWAKENED);
++    else thread_block(THREAD_CONTINUE_NULL);
++}
++
+ /* ---- the I/O supply (RPMh) ----------------------------------------------------------------------- */
+ 
+ #define CMD_DB_PHYS             cmd_db_phys
+@@ -792,9 +831,9 @@
+ 		}
+ 		contact[id].seen = true;
+ 		if (!contact[id].down) {
+-			diting_touch_post(DITING_TOUCH_DOWN, id, x, y);
++			diting_touch_post_at(DITING_TOUCH_DOWN,id,x,y,touch_frame_time);
+ 		} else if (contact[id].x != x || contact[id].y != y) {
+-			diting_touch_post(DITING_TOUCH_MOVE, id, x, y);
++			diting_touch_post_at(DITING_TOUCH_MOVE,id,x,y,touch_frame_time);
+ 		}
+ 		contact[id].down = true;
+ 		contact[id].x = x;
+@@ -804,7 +843,7 @@
+ 	for (uint32_t id = 0; id < GOODIX_MAX_TOUCHES; id++) {
+ 		if (contact[id].down && !contact[id].seen) {
+ 			contact[id].down = false;
+-			diting_touch_post(DITING_TOUCH_UP, id, contact[id].x, contact[id].y);
++			diting_touch_post_at(DITING_TOUCH_UP,id,contact[id].x,contact[id].y,touch_frame_time);
+ 		}
+ 	}
+ }
+@@ -819,6 +858,8 @@
+ 	const uint32_t first = 8 + 8 * 2 + 2;           /* the header and two fingers: all there is, most of the time */
+ 	uint32_t count;
+ 
++    const uint64_t irq_stamp=__atomic_exchange_n(&touch_irq_time,0,__ATOMIC_ACQ_REL);
++    touch_frame_time=irq_stamp?irq_stamp:mach_absolute_time();
+ 	seen.polls++;
+ 	if (!goodix_read(touch_address, report, first) || report[0] == 0) {
+ 		return;
+@@ -856,6 +897,10 @@
+ 		return;
+ 	}
+ 	goodix_report(report + 8, count);
++    uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time()-touch_frame_time,&ns);
++    const uint64_t us=ns/1000;touch_latency_total+=us;if(us>touch_latency_max)touch_latency_max=us;
++    if(!(++touch_latency_count&255u))printf("Diting touch latency: reports=%u irq=%u spurious=%u read_mean_us=%llu read_max_us=%llu IRQ=%u\n",
++        touch_latency_count,touch_irqs,touch_spurious,touch_latency_total/touch_latency_count,touch_latency_max,touch_irq_armed);
+ }
+ 
+ 
+@@ -915,10 +960,12 @@
+     if (!diting_touch_device_ready()) {thread_terminate(current_thread());return;}
+     printf("Diting touch: Berlin-D ready, SPI 0x%llx GPIO reset=%u irq=%u, axes %ux%u\n",
+         se_phys,PIN_RESET,PIN_INT,max_x,max_y);
++    touch_irq_armed=arm_touch_irq();
++    printf("Diting touch: IRQ240 GPIO21 falling-edge=%u; bounded polling fallback retained\n",touch_irq_armed);
+     unsigned idle=0;
+     for (;;) {
+-        if (!gpio_get(PIN_INT) || ++idle>=10) {idle=0;goodix_poll();}
+-        sleep_ms(8);
++        if (__atomic_load_n(&touch_pending,__ATOMIC_ACQUIRE)||!gpio_get(PIN_INT)||++idle>=10) {idle=0;goodix_poll();}
++        touch_wait(touch_irq_armed?8:2);
+     }
+ }
+ 
+--- a/bsd/sys/diting_input.h
++++ b/bsd/sys/diting_input.h
+@@ -16,6 +16,7 @@
+ };
+ #ifdef KERNEL
+ void diting_touch_post(uint32_t, uint32_t, uint32_t, uint32_t);
++void diting_touch_post_at(uint32_t,uint32_t,uint32_t,uint32_t,uint64_t);
+ bool diting_touch_device_ready(void);
+ bool diting_buttons_device_ready(void);
+ void diting_goodix_init(void);
+--- a/bsd/dev/diting_input.c
++++ b/bsd/dev/diting_input.c
+@@ -29,12 +29,24 @@
+ void
+ diting_touch_post(uint32_t type,uint32_t finger,uint32_t x,uint32_t y)
+ {
++    diting_touch_post_at(type,finger,x,y,mach_absolute_time());
++}
++void
++diting_touch_post_at(uint32_t type,uint32_t finger,uint32_t x,uint32_t y,uint64_t stamp)
++{
+     if (type<DITING_TOUCH_DOWN || type>DITING_BUTTON_UP ||
+         finger>=(type>=DITING_BUTTON_DOWN?3u:10u)) return;
+     struct input_queue *q=&queues[type>=DITING_BUTTON_DOWN];
+     lck_mtx_lock(&touch_lock);
++    if(type==DITING_TOUCH_MOVE&&q->tail-q->head>1) {
++        struct diting_touch *last=&q->samples[(q->tail-1)%QUEUE_SIZE];
++        if(last->type==DITING_TOUCH_MOVE&&last->finger==finger) {
++            *last=(struct diting_touch){stamp,type,finger,x>65535?65535:x,y>65535?65535:y};
++            lck_mtx_unlock(&touch_lock);wakeup(q);return;
++        }
++    }
+     if (q->tail-q->head==QUEUE_SIZE) q->head++;
+-    q->samples[q->tail++%QUEUE_SIZE]=(struct diting_touch){mach_absolute_time(),type,finger,
++    q->samples[q->tail++%QUEUE_SIZE]=(struct diting_touch){stamp,type,finger,
+         x>65535?65535:x,y>65535?65535:y};
+     lck_mtx_unlock(&touch_lock);
+     wakeup(q);

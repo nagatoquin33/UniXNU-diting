@@ -1,0 +1,69 @@
+--- a/libkern/c++/OSKext.cpp
++++ b/libkern/c++/OSKext.cpp
+@@ -16373,6 +16373,10 @@
+ 	OSKextActiveAccount * accountingList;
+ 	OSKextActiveAccount * prevAccountingList;
+ 	uint32_t idx, accountingListAlloc, accountingListCount, prevAccountingListCount;
++#if defined(DITING)
++	OSKextLoadedKextSummaryHeader *previousSummary = NULL;
++	size_t previousSummarySize = 0;
++#endif
+ 
+ 	prevAccountingList = NULL;
+ 	prevAccountingListCount = 0;
+@@ -16405,6 +16409,11 @@
+ 	size += maxKexts * sizeof(*gLoadedKextSummaries->summaries);
+ 	size = round_page(size);
+ 
++#if defined(DITING)
++	// 使用新的可写映射，避免通过写故障恢复旧映射的权限。
++	previousSummary = gLoadedKextSummaries;
++	previousSummarySize = sLoadedKextSummariesAllocSize;
++#else
+ 	if (gLoadedKextSummaries == NULL || sLoadedKextSummariesAllocSize < size) {
+ 		if (gLoadedKextSummaries) {
+ 			kmem_free(kernel_map, (vm_offset_t)gLoadedKextSummaries, sLoadedKextSummariesAllocSize);
+@@ -16412,13 +16421,6 @@
+ 			gLoadedKextSummariesTimestamp = mach_absolute_time();
+ 			sLoadedKextSummariesAllocSize = 0;
+ 		}
+-		result = kmem_alloc(kernel_map, (vm_offset_t *)&summaryHeaderAlloc, size,
+-		    KMA_DATA, VM_KERN_MEMORY_OSKEXT);
+-		if (result != KERN_SUCCESS) {
+-			goto finish;
+-		}
+-		summaryHeader = summaryHeaderAlloc;
+-		summarySize = size;
+ 	} else {
+ 		summaryHeader = gLoadedKextSummaries;
+ 		summarySize = sLoadedKextSummariesAllocSize;
+@@ -16433,6 +16435,17 @@
+ 			goto finish;
+ 		}
+ 	}
++#endif
++
++	if (summaryHeader == NULL) {
++		result = kmem_alloc(kernel_map, (vm_offset_t *)&summaryHeaderAlloc, size,
++		    KMA_DATA, VM_KERN_MEMORY_OSKEXT);
++		if (result != KERN_SUCCESS) {
++			goto finish;
++		}
++		summaryHeader = summaryHeaderAlloc;
++		summarySize = size;
++	}
+ 
+ 	/* Populate the summary header.
+ 	 */
+@@ -16492,6 +16505,11 @@
+ 	gLoadedKextSummariesTimestamp = mach_absolute_time();
+ 	sLoadedKextSummariesAllocSize = summarySize;
+ 	summaryHeaderAlloc = NULL;
++#if defined(DITING)
++	if (previousSummary != NULL) {
++		kmem_free(kernel_map, (vm_offset_t)previousSummary, previousSummarySize);
++	}
++#endif
+ 
+ 	/* Call the magic breakpoint function through a static function pointer so
+ 	 * the compiler can't optimize the function away.

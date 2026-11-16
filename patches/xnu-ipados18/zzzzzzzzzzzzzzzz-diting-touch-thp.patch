@@ -1,0 +1,328 @@
+--- a/bsd/dev/diting_goodix.c
++++ b/bsd/dev/diting_goodix.c
+@@ -656,7 +656,7 @@
+ 
+ #define GOODIX_FW_VERSION       0x10014         /* 28 bytes */
+ #define GOODIX_IC_INFO          0x10070         /* a 16-bit length, then that many bytes */
+-#define GOODIX_MAX_READ         2048    /* Berlin-D config packages run past 1K */
++#define GOODIX_MAX_READ         4096    /* config packages and THP difference frames run past 1K */
+ #define GOODIX_MAX_TOUCHES      10
+ #define GOODIX_STATUS_TOUCH     0x80
+ #define GOODIX_STATUS_REQUEST   0x40
+@@ -664,6 +664,8 @@
+ 
+ static uint8_t spi_tx[8 + GOODIX_MAX_READ], spi_rx[8 + GOODIX_MAX_READ];
+ static uint32_t touch_address, command_address, fw_buffer_address, ic_config_id;
++static uint32_t frame_address, frame_skip;   /* misc +24, +28/+30/+32 */
++static uint8_t thp_tx, thp_rx, thp_mode;
+ static uint16_t fw_buffer_max_len;
+ 
+ static bool
+@@ -786,6 +788,10 @@
+ 	command_address = le32(info + offset + 0);      /* (the "misc" part: the command buffer comes first) */
+ 	fw_buffer_address = le32(info + offset + 18);   /* where a config package is staged */
+ 	fw_buffer_max_len = le16(info + offset + 22);
++	frame_address = le32(info + offset + 24);
++	frame_skip = le16(info + offset + 28) + le16(info + offset + 30) + le16(info + offset + 32);
++	thp_tx = info[2 + 16 + 10];
++	thp_rx = info[2 + 16 + 10 + 1];
+ 	ic_config_id = le32(info + 6);                  /* ic_info_version.config_id (version+4) */
+     /* Vendor misc +52/+54 are display-space axes (1220x2712). Touch reports
+      * arrive in the vendor panel space (dts goodix,panel-max-*: 12200x27120),
+@@ -812,6 +818,50 @@
+ #define GOODIX_CFG_DONE         0x80
+ #define GOODIX_CFG_PKG_ADDR     0x3e000 /* where the package is staged inside the chip */
+ 
++/* A framed vendor command: {0,0,len=4+n,cmd,data[n],u16 sum over bytes 2..3+n}
++ * written to command_address; the chip acks 0x80 at reply byte 1. */
++static bool
++goodix_send_cmd(uint8_t command, const uint8_t *data, uint32_t n)
++{
++	uint8_t buf[16] = {0}, reply[16] = {0};
++	uint16_t sum = 0;
++
++	if (!command_address || n > 8) {
++		return false;
++	}
++	buf[2] = (uint8_t)(n + 4);
++	buf[3] = command;
++	for (uint32_t i = 0; i < n; i++) {
++		buf[4 + i] = data[i];
++	}
++	for (uint32_t i = 2; i < 4 + n; i++) {
++		sum += buf[i];
++	}
++	buf[4 + n] = (uint8_t)sum;
++	buf[5 + n] = (uint8_t)(sum >> 8);
++	for (int attempt = 0; attempt < 6; attempt++) {
++		if (!goodix_write(command_address, buf, sizeof(buf))) {
++			return false;
++		}
++		for (int i = 0; i < 6; i++) {
++			if (!goodix_read(command_address, reply, sizeof(reply))) {
++				return false;
++			}
++			if (reply[1] == 0x80) {
++				sleep_ms(2);
++				return true;
++			}
++			if (reply[1] == 0x02 || reply[1] == 0x00) {
++				sleep_ms(1);
++				continue;
++			}
++			sleep_ms(reply[1] == 0x03 ? 10 : 1);
++			break;
++		}
++	}
++	return false;
++}
++
+ static bool
+ goodix_cfg_cmd(uint8_t command, uint8_t target)
+ {
+@@ -949,6 +999,204 @@
+ 	}
+ }
+ 
++/* ---- Berlin-D THP host touch processing --------------------------------------
++ * Command 0x90 with data 0x82 asks the firmware for mutual-capacitance
++ * difference frames instead of finished coordinates (Xiaomi brld_get_cap_data);
++ * this GT9916 family leaves coordinate computation to the host. Bit 7 of the
++ * byte at frame_data_addr marks a ready frame and clears when written 0; the
++ * int16-LE matrix follows the frame head, attribute and log blocks (misc
++ * +28/+30/+32 lengths) and 8 more bytes, tx-major order. The host picks peaks,
++ * integrates a 3x3 centroid, tracks slots and emits contacts. Reference:
++ * K70 k70_touch.c / vermeer_goodix_info.h. Boot args: diting-touch-thr
++ * (default 200), diting-touch-map (bit0 long-axis swap, bit1 mirror x,
++ * bit2 mirror y). */
++
++#define THP_NODES_MAX   1500
++static int16_t thp_m[THP_NODES_MAX];
++static uint8_t thp_used[THP_NODES_MAX];
++static uint8_t thp_fbuf[GOODIX_MAX_READ];
++static uint32_t thp_thr = 200, thp_map, thp_frames;
++static struct {
++	bool active;
++	uint32_t x, y;
++} thp_slot[GOODIX_MAX_TOUCHES];
++
++static void
++thp_emit(uint32_t id, uint32_t type, uint32_t x, uint32_t y)
++{
++	x = x >= max_x ? 65535 : x * 65535 / max_x;
++	y = y >= max_y ? 65535 : y * 65535 / max_y;
++	if (flip & 1) {
++		x = 65535 - x;
++	}
++	if (flip & 2) {
++		y = 65535 - y;
++	}
++	diting_touch_post_at(type, id, x, y, touch_frame_time);
++}
++
++static void
++thp_process(void)
++{
++	const uint32_t T = thp_tx, R = thp_rx, nodes = T * R;
++	const int thr = (int)thp_thr;
++	struct {
++		long x, y;
++	} peak[5];
++	uint32_t np = 0;
++
++	bzero(thp_used, nodes);
++	for (uint32_t k = 0; k < 5; k++) {
++		int best = 0;
++		uint32_t bi = 0;
++		for (uint32_t i = 0; i < nodes; i++) {
++			int v = thp_m[i] < 0 ? -thp_m[i] : thp_m[i];
++			if (!thp_used[i] && v > best) {
++				best = v;
++				bi = i;
++			}
++		}
++		if (best < thr) {
++			break;
++		}
++		int pt = (int)(bi / R), pr = (int)(bi % R);
++		long sw = 0, st = 0, sr = 0;
++		for (int dt = -1; dt <= 1; dt++) for (int dr = -1; dr <= 1; dr++) {
++			int t = pt + dt, r = pr + dr;
++			if (t < 0 || r < 0 || t >= (int)T || r >= (int)R) {
++				continue;
++			}
++			int v = thp_m[t * (int)R + r];
++			if (v < 0) {
++				v = -v;
++			}
++			int w = v - thr / 2;
++			if (w <= 0) {
++				continue;
++			}
++			sw += w;
++			st += (long)w * (2 * t + 1);
++			sr += (long)w * (2 * r + 1);
++		}
++		for (int dt = -2; dt <= 2; dt++) for (int dr = -2; dr <= 2; dr++) {
++			int t = pt + dt, r = pr + dr;
++			if (t >= 0 && r >= 0 && t < (int)T && r < (int)R) {
++				thp_used[t * (int)R + r] = 1;
++			}
++		}
++		if (!sw) {
++			continue;
++		}
++		/* centroid in half-node units; the long matrix axis is the screen's
++		 * long axis (per the K70 reference) */
++		int t_is_y = ((int)T >= (int)R) ^ ((thp_map & 1) != 0);
++		long cx = t_is_y ? sr : st, cy = t_is_y ? st : sr;
++		long nx = 2L * (t_is_y ? R : T), ny = 2L * (t_is_y ? T : R);
++		long x = cx * max_x / (nx * sw), y = cy * max_y / (ny * sw);
++		if (thp_map & 2) {
++			x = (long)max_x - 1 - x;
++		}
++		if (thp_map & 4) {
++			y = (long)max_y - 1 - y;
++		}
++		if (x < 0) {
++			x = 0;
++		}
++		if (x >= (long)max_x) {
++			x = (long)max_x - 1;
++		}
++		if (y < 0) {
++			y = 0;
++		}
++		if (y >= (long)max_y) {
++			y = (long)max_y - 1;
++		}
++		peak[np].x = x;
++		peak[np].y = y;
++		np++;
++	}
++	/* Keep a finger's slot across frames: nearest previous contact within a
++	 * scaled radius (K70 used 300 px on a 1440-wide panel), else a free slot. */
++	uint32_t claimed = 0;
++	const long near = (long)max_x * 300 / 1440;
++	bool now[GOODIX_MAX_TOUCHES] = {false};
++	uint32_t nx[GOODIX_MAX_TOUCHES], ny[GOODIX_MAX_TOUCHES];
++	for (uint32_t k = 0; k < np; k++) {
++		int slot = -1;
++		long bestd = near * near;
++		for (uint32_t s_ = 0; s_ < GOODIX_MAX_TOUCHES; s_++) {
++			if (!thp_slot[s_].active || (claimed & (1u << s_))) {
++				continue;
++			}
++			long dx = (long)thp_slot[s_].x - peak[k].x, dy = (long)thp_slot[s_].y - peak[k].y;
++			if (dx * dx + dy * dy < bestd) {
++				bestd = dx * dx + dy * dy;
++				slot = (int)s_;
++			}
++		}
++		if (slot < 0) {
++			for (uint32_t s_ = 0; s_ < GOODIX_MAX_TOUCHES; s_++) {
++				if (!thp_slot[s_].active && !(claimed & (1u << s_))) {
++					slot = (int)s_;
++					break;
++				}
++			}
++		}
++		if (slot < 0) {
++			continue;
++		}
++		claimed |= 1u << slot;
++		now[slot] = true;
++		nx[slot] = (uint32_t)peak[k].x;
++		ny[slot] = (uint32_t)peak[k].y;
++	}
++	for (uint32_t s_ = 0; s_ < GOODIX_MAX_TOUCHES; s_++) {
++		if (now[s_]) {
++			if (!thp_slot[s_].active) {
++				thp_emit(s_, DITING_TOUCH_DOWN, nx[s_], ny[s_]);
++			} else if (thp_slot[s_].x != nx[s_] || thp_slot[s_].y != ny[s_]) {
++				thp_emit(s_, DITING_TOUCH_MOVE, nx[s_], ny[s_]);
++			}
++			thp_slot[s_].active = true;
++			thp_slot[s_].x = nx[s_];
++			thp_slot[s_].y = ny[s_];
++		} else if (thp_slot[s_].active) {
++			thp_slot[s_].active = false;
++			thp_emit(s_, DITING_TOUCH_UP, thp_slot[s_].x, thp_slot[s_].y);
++		}
++	}
++	if (np) {
++		seen.touches += np;
++	}
++}
++
++/* 1 = a frame was consumed, 0 = none ready, -1 = bus failure */
++static int
++thp_frame(void)
++{
++	uint8_t flag = 0;
++	const uint8_t zero = 0;
++	const uint32_t nodes = (uint32_t)thp_tx * thp_rx, off = frame_skip + 8;
++
++	if (!goodix_read(frame_address, &flag, 1)) {
++		return -1;
++	}
++	if (!(flag & 0x80)) {
++		return 0;
++	}
++	if (!goodix_read(frame_address, thp_fbuf, off + nodes * 2)) {
++		return -1;
++	}
++	if (!goodix_write(frame_address, &zero, 1)) {
++		return -1;
++	}
++	for (uint32_t i = 0; i < nodes; i++) {
++		thp_m[i] = (int16_t)le16(thp_fbuf + off + 2 * i);
++	}
++	thp_frames++;
++	return 1;
++}
++
+ /* Read the report if there is one, and tell the chip it has been read. */
+ static void
+ goodix_poll(void)
+@@ -1090,8 +1338,39 @@
+         se_phys,PIN_RESET,PIN_INT,max_x,max_y);
+     touch_irq_armed=arm_touch_irq();
+     printf("Diting touch: IRQ240 GPIO21 falling-edge=%u; bounded polling fallback retained\n",touch_irq_armed);
+-    unsigned idle=0;
++    PE_parse_boot_argn("diting-touch-thr",&thp_thr,sizeof(thp_thr));
++    PE_parse_boot_argn("diting-touch-map",&thp_map,sizeof(thp_map));
++    if (frame_address && thp_tx >= 4 && thp_rx >= 4 &&
++        (uint32_t)thp_tx * thp_rx <= THP_NODES_MAX &&
++        frame_skip + 8 + (uint32_t)thp_tx * thp_rx * 2 <= GOODIX_MAX_READ) {
++        const uint8_t diff = 0x82, zero = 0;
++        thp_mode = goodix_send_cmd(0x90, &diff, 1);
++        (void)goodix_write(frame_address, &zero, 1);
++        printf("goodix: THP mode %u; matrix %ux%u frame %#x skip %u thr %u\n",
++            thp_mode, thp_tx, thp_rx, frame_address, frame_skip, thp_thr);
++    } else {
++        printf("goodix: THP unavailable (frame %#x matrix %ux%u); coordinate reports only\n",
++            frame_address, thp_tx, thp_rx);
++    }
++    unsigned idle=0, thp_wait=0;
+     for (;;) {
++        if (thp_mode) {
++            int fr = thp_frame();
++            if (fr > 0) {
++                thp_wait = 0;
++                thp_process();
++            } else if (fr < 0) {
++                printf("goodix: THP frame read failed; coordinate mode restored\n");
++                const uint8_t coord = 0;
++                (void)goodix_send_cmd(0x90, &coord, 1);
++                thp_mode = 0;
++            } else if (!thp_frames && ++thp_wait > 750) {
++                printf("goodix: no THP frames in %u polls; coordinate mode restored\n", thp_wait);
++                const uint8_t coord = 0;
++                (void)goodix_send_cmd(0x90, &coord, 1);
++                thp_mode = 0;
++            }
++        }
+         if (__atomic_load_n(&touch_pending,__ATOMIC_ACQUIRE)||!gpio_get(PIN_INT)||++idle>=10) {idle=0;goodix_poll();}
+         touch_wait(touch_irq_armed?8:2);
+     }

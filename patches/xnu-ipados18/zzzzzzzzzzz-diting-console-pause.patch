@@ -1,0 +1,61 @@
+--- a/osfmk/console/serial_console.c
++++ b/osfmk/console/serial_console.c
+@@ -522,6 +522,7 @@
+  */
+ #if defined(DITING) && defined(XNU_DITING_RAMOOPS_CONSOLE) && XNU_DITING_RAMOOPS_CONSOLE
+ extern void diting_ramoops_console_write(const char *, int);
++extern void diting_console_pause(const char *, int);
+ #endif
+ 
+ void
+@@ -529,6 +530,7 @@
+ {
+ #if defined(DITING) && defined(XNU_DITING_RAMOOPS_CONSOLE) && XNU_DITING_RAMOOPS_CONSOLE
+ 	diting_ramoops_console_write(str, size);
++	diting_console_pause(str, size);
+ #endif
+ 	if (disableConsoleOutput) {
+ 		return;
+--- a/osfmk/arm64/diting_ramoops_console.h
++++ b/osfmk/arm64/diting_ramoops_console.h
+@@ -147,3 +147,40 @@
+ 	diting_ramoops_diagnostic_write(ready, (int)sizeof(ready)-1);
+ 	return 1;
+ }
++
++/* diting_console_pause=<ms>: slow the verbose scroll when a console line
++ * mentions the touch path so the failing stage can be read on the panel.
++ * Disabled by default and skipped in panic. Manual compares keep this
++ * header free of extra includes. */
++extern void delay(int);
++extern unsigned panic_active(void);
++extern int PE_parse_boot_argn(const char *, void *, int);
++void diting_console_pause(const char *, int);
++void
++diting_console_pause(const char *text, int length)
++{
++	static int pause_us = -1;
++	if (pause_us < 0) {
++		int ms = 0;
++		pause_us = (PE_parse_boot_argn("diting_console_pause", &ms, sizeof(ms)) && ms > 0) ?
++		    (ms < 60000 ? ms : 60000) * 1000 : 0;
++	}
++	if (!pause_us || !text || length <= 0 || panic_active()) {
++		return;
++	}
++	for (int i = 0; i < length; i++) {
++		int rest = length - i;
++		if (rest >= 6 && text[i] == 'g' && text[i+1] == 'o' && text[i+2] == 'o' &&
++		    text[i+3] == 'd' && text[i+4] == 'i' && text[i+5] == 'x') {
++			delay(pause_us);
++			return;
++		}
++		if (rest >= 12 && text[i] == 'D' && text[i+1] == 'i' && text[i+2] == 't' &&
++		    text[i+3] == 'i' && text[i+4] == 'n' && text[i+5] == 'g' &&
++		    text[i+6] == ' ' && text[i+7] == 't' && text[i+8] == 'o' &&
++		    text[i+9] == 'u' && text[i+10] == 'c' && text[i+11] == 'h') {
++			delay(pause_us);
++			return;
++		}
++	}
++}
