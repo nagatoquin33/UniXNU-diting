@@ -13,7 +13,7 @@
 | core 钉版 | `fd2f4d1`（`sync/upstream-20261116`；upstream `03129b6` + 本地 `00b8415`，device `59c88c8` 验证：kernel exit 0、storage/porting PASS；见根目录 `core-provenance.json`） |
 | OS | Diting 布局：`/sbin/launchd` = `/diting/init` sha256 `95cb7341…`；`libditing-ui18.dylib` 174,976 B，含 `/dev/diting-touch`；卷 UUID `B07DF049…` |
 | userdata | 整盘 sparse 恢复：`userdata-osditing-1109.sparse.img`（19,411,252,824 B，OS 窗口来自 `artifacts/ci-42987806310/diting-ipados18-system.cdr`，6,845,104,128 B sha256 `27c507c8972275c9170806bb975b03d762ebbb9379945b890d5665a154e8102d`） |
-| 待上机候选 | `D:\ai\diting\build-work\diting-addon24-diag.img`（`54ed270b…`）、`diting-addon26-diag.img`（`ee7278b2…`）、`diting-addon27-diag.img`（`d0b0e1e1…`）、`diting-addon28-diag.img`（`8cdd951d…`，Turnip 0016/0017 + cache-dir 遥测），静态检查 PASS，`hardware_tested=false` |
+| 待上机候选 | `D:\ai\diting\build-work\diting-addon24-diag.img`（`54ed270b…`）、`diting-addon26-diag.img`（`ee7278b2…`）、`diting-addon27-diag.img`（`d0b0e1e1…`）、`diting-addon28-diag.img`（`8cdd951d…`）、`diting-addon29-diag.img`（`4fadc124…`，addon28 的 GPU trace/pixel 变体），静态检查 PASS，`hardware_tested=false` |
 | 代码备份 | `/home/nagatoquin/unixnu/backups/diting-ci-before-rpmh-slot-20261115` |
 
 ## 已实机证实
@@ -40,6 +40,7 @@
   （addon24）；pwrkey/PSCI：`build-work/evidence-20261116-pwrkey/README.md`
 - GPU 上游诊断移植：`build-work/evidence-20261116-gpu-upstream/README.md`、`addon27-report.json`、`verification.json`
 - Turnip 重建 / addon28：`build-work/evidence-20261116-turnip/README.md`、`addon28-report.json`、`verification.json`
+- addon29 追踪变体：`build-work/evidence-20261116-gpu-official/verification-addon29.json`、`build-image-addon29.log`（产物逐字节与 addon28 相同，仅 args 不同）
 - 仓库记录：`AGENTS.md` 的 2026-11-15/16 各条
 
 ## 当前阻塞（真机日志定位，非推断）
@@ -58,11 +59,16 @@
 
 按顺序只记录第一个失败阶段，不跳步、不猜测。
 
-1. **addon28-diag**（`8cdd951d…`，kernel `7ed899e5…`，50 args/968 B 含 `log-gpu=1`）：确认桌面/触摸保持；
-   滚动 Settings/Home 30 s 冷态读 +20/+60 s 块：`T pipeline n/total/max`、`PR resumed`、`H frame-enc` 分箱、`ctc`、`V cache h/m/w/q/rf/wf/ev`、
-   `V drv l/h/m/s/tr/mm/un`、`C cache dir=… shared=… writable=…`（`log-gpu=1` 的 `Diting Metal pass` 行用于归因 pass/draw/pixel 集）；
+1. **addon29-diag**（`4fadc124…`，kernel `7ed899e5…`，52 args/999 B；内核/插件/bridge/turnip/addon 与 addon28 逐字节相同）：
+   在 addon28 基础上加 `diting_gpu_trace=1 diting_gpu_pixels=1`——前者打开 fork 的 per-frame GPU trace（提交/pass/fence 事件行），
+   后者打开 pixel capture（`frameEvent(40)`，用于把 `H frame-enc`/`ctc` 尾部对应到具体 pass/pixel 集）；保留 `log-gpu=1`、
+   `diting_pwrkey_log=1`/`diting_pwrkey_long=5000`，`applog_name` 收窄为 `backboardd,SpringBoard` 以放进 1000 B。
+   确认桌面/触摸保持；滚动 Settings/Home 30 s 冷态读 +20/+60 s 块：`T pipeline n/total/max`、`PR resumed`、`H frame-enc` 分箱、`ctc`、
+   `V cache h/m/w/q/rf/wf/ev`、`V drv l/h/m/s/tr/mm/un`、`C cache dir=… shared=… writable=…`，并用新增 trace 行归因 pass/draw/pixel 集；
    再滚 30 s 热态对比 `T`/`frame-enc`/`ctc`/`E age`；重启后再冷滚一次，看 shader-cache `h` 是否上升、`T` 是否下降；
-   异常时回 addon27（旧 Turnip）同内核对照。addon26 继续用于 pwrkey/PSCI SYSTEM_OFF 与 `PR functions resumed`。
+   异常时回 addon28（无 trace，同内核/同 artifacts）或 addon27（旧 Turnip）对照。addon26 继续用于 pwrkey/PSCI SYSTEM_OFF 与 `PR functions resumed`。
+   > 跟进项：args 里 `diting_ui_software=0`、`diting_software_ui=0` 来自 `scripts/build-release-image-linux.py` 的 builder 默认值，
+   > 不在 board.toml；它们占用约 45 B 预算，后续应与 `[payload] kernel_args` 统一后再动。
 2. **Wi-Fi**：RPMh committed → 物理电源 → PCIe → SMMU/MSI → MHI/QMI → station/MAC → 系统设置扫描 →
    关联 → DHCP。仍超时时比较 TCS1 的触发控制、命令状态、idle 与 IRQ_STATUS。
 3. **电量 / ADSP**：越过 stage 7 → PAS → DSP ready → GLINK → `PMIC_RTR_ADSP_APPS` →

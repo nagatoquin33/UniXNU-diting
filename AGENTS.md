@@ -1411,3 +1411,23 @@ work is the boot itself, not the inputs.
   `T pipeline`、`PR resumed`、`H frame-enc`、`ctc`、`V cache`、`V drv`、`C cache dir`；异常回 addon27（旧 Turnip）同内核对照。
 - 证据：`build-work/evidence-20261116-turnip/README.md`、`addon28-report.json`、`verification.json`、`logs/turnip-build.log`。
   本轮只提交补丁/驱动与文档，未上机、未派 CI；上游仓库只读。
+
+## 2026-11-16 — addon29：args-only GPU trace/pixel 追踪变体
+
+- 来源：committed main `05e9e48` 的 release 镜像重用，仅改 args；产物与 addon28 逐字节相同：kernel `7ed899e5…`
+  （73,773,056 B，26 IOGPU entries）、plugin `f624a7d5…`、bridge `582cca91…`、turnip `eab147a8…`、
+  `addon28.gpuaddon` `5007f1fb…`（7 文件，adsp `d299d413…`）。
+- args：52 tokens / 999 chars（`within_1000`），在 addon28 基础上新增 `diting_gpu_trace=1 diting_gpu_pixels=1`，
+  保留 `log-gpu=1`、`diting_pwrkey_log=1`、`diting_pwrkey_long=5000`；`applog_name=backboardd,SpringBoard` 以让总长度回到 1000 B 以内。
+  两个 UI 开关 `diting_ui_software=0`/`diting_software_ui=0` 来自 `scripts/build-release-image-linux.py` 的 builder 默认值（不在 board.toml），
+  留作后续与 `[payload] kernel_args` 统一时的跟进项。
+- 验证（`verification-addon29.json`，全部 PASS）：v4 layout、kernel slot = intended `7ed899e5…` 首 4 MiB、PONGFAT1 CRC `0x209d9609`、
+  `manifest boot_args == args`、`ADT == SHA-384(manifest)`、`loader/adt contract` PASS、`storage bindings` PASS（9 绑定）、
+  plugin/bridge/turnip/addon 均 `same_as_28`；`bytes=101,187,584`。
+- 镜像：`D:\ai\diting\build-work\diting-addon29-diag.img` sha256
+  `4fadc1241b0b8dc9877f4ffd9fb219edbd862f4b58a3ecd43414902446ef1408`；`hardware_tested=false`。
+- 预期：`diting_gpu_trace=1` 输出 per-frame GPU trace（提交/pass/fence 事件），`diting_gpu_pixels=1` 打开 pixel capture（`frameEvent(40)`），
+  与 `log-gpu=1` 的 `Diting Metal pass` 行一起把 `T pipeline`/`H frame-enc`/`ctc` 尾部归因到具体 pass/draw/pixel 集；
+  真机测试仍按冷滚 30 s → 热滚 30 s → 重启冷滚 30 s，异常回 addon28/addon27 对照。
+- 证据：`build-work/evidence-20261116-gpu-official/verification-addon29.json`、`build-image-addon29.log`、`verify-addon29.py`。
+  本轮只改 args 并记录，未上机、未派 CI。
