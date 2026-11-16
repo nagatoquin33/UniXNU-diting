@@ -30,6 +30,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
 import zlib
 from pathlib import Path
@@ -39,6 +40,67 @@ SIGNATURE_BYTES = 4096       # boot v4 signature area, left empty
 BOOT_HEADER_V4_SIZE = 1584   # boot image header v4, as mkbootimg writes it
 BOOT_ARGS_BYTES = 1536       # BOOT_ARGS_SIZE 512 + BOOT_EXTRA_ARGS_SIZE 1024
 MAGIC = b'PONGFAT1'
+
+def _parse_adt(blob):
+    def read(at):
+        count, children = struct.unpack_from('<II', blob, at)
+        at += 8
+        props = []
+        for _ in range(count):
+            key, size = struct.unpack_from('<32sI', blob, at)
+            key = key.rstrip(b'\0').decode()
+            at += 36
+            props.append((key, blob[at:at + size]))
+            at += (size + 3) & ~3
+        node = {'props': props, 'children': []}
+        for _ in range(children):
+            at, child = read(at)
+            node['children'].append(child)
+        return at, node
+    at, root = read(0)
+    if at != len(blob):
+        raise SystemExit('the payload ADT has trailing bytes')
+    return root
+
+
+def _encode_adt(node):
+    body = struct.pack('<II', len(node['props']), len(node['children']))
+    for key, data in node['props']:
+        body += struct.pack('<32sI', key.encode(), len(data)) + data + bytes(-len(data) % 4)
+    for child in node['children']:
+        body += _encode_adt(child)
+    return body
+
+
+def _find_adt(node, name):
+    for child in node['children']:
+        if dict(child['props']).get('name', b'') == name.encode() + b'\0':
+            return child
+    raise SystemExit(f'payload ADT has no /{name} node')
+
+
+def _set_adt(node, key, value):
+    node['props'] = [item for item in node['props'] if item[0] != key] + [(key, value)]
+
+
+def patch_official_adt(blob, manifest, root_uuid):
+    """Add only the per-boot/per-image /chosen fields to the generator's ADT.
+
+    scripts/unixnu/devicetree.py (board [adt.*] inputs) writes the whole static
+    tree; these four values cannot be static: the boot clock, the boot manifest
+    digest, the APFS root volume UUID and the per-image manifest nonce.
+    """
+    tree = _parse_adt(blob)
+    chosen = _find_adt(tree, 'chosen')
+    _set_adt(chosen, 'boot-epoch', struct.pack('<Q', int(time.time())))
+    _set_adt(chosen, 'boot-manifest-hash', hashlib.sha384(manifest).digest())
+    if root_uuid:
+        _set_adt(chosen, 'root-matching',
+                 ('<dict><key>IOProviderClass</key><string>IOMedia</string><key>IOPropertyMatch</key>'
+                  '<dict><key>UUID</key><string>' + str(root_uuid).upper() + '</string></dict></dict>\0').encode())
+    _set_adt(_find_adt(chosen, 'manifest-properties'), 'BNCH', hashlib.sha384(os.urandom(32)).digest())
+    return _encode_adt(tree)
+
 
 MANIFEST_FORMAT = 'pong-development-boot-manifest-v1'
 BOARD = 'Nothing Phone (2) / Diting / SM8475'
@@ -123,6 +185,8 @@ def main():
     parser.add_argument('--cpus', type=int, choices=range(1, 9), default=1,
                         help='CPU nodes in the ADT; a local bring-up run passes 1')
     parser.add_argument('--chip-id', default=None, help='BuildIdentity chip ID (default: board.toml [payload.adt])')
+    parser.add_argument('--official-adt', action='store_true',
+                        help='keep the payload step generator ADT and patch only its dynamic fields')
     parser.add_argument('--ufs-probe', action='store_true',
                         help='publish the UFS nub; a local bring-up image leaves it out')
     parser.add_argument('--no-development-debug', dest='development_debug', action='store_false',
@@ -173,6 +237,38 @@ def main():
     manifest_file.write_bytes(manifest)
 
     generated = work / 'payload/kernel.macho.adt.diting'
+    if args.official_adt:
+        # Boards whose DTS and [adt.*] inputs express the whole tree: the payload
+        # step already wrote the generator ADT; add only the dynamic /chosen
+        # fields instead of regenerating the tree.
+        current = read_member(payload, 'EFI/UniXNU/Payloads/kernel.macho.adt')
+        if not current:
+            raise SystemExit('payload has no generator ADT for --official-adt')
+        adt = patch_official_adt(current, manifest, root_uuid)
+        (work / 'payload/kernel.macho.adt.diting').write_bytes(adt)
+        write_member(payload, 'EFI/UniXNU/Payloads/kernel.macho.adt', adt)
+        write_member(payload, 'EFI/UniXNU/Payloads/pong-boot-manifest.json', manifest)
+        ramdisk = envelope(payload.read_bytes())
+        image = boot_image(ramdisk)
+        target = work / 'boot/diting-xnu-initial.img'
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(image)
+        record = {'generator': 'scripts/finalize-diting-adt.py --official-adt',
+                  'container': {'format': 'android-boot-v4', 'header_bytes': BOOT_HEADER_V4_SIZE,
+                                'kernel_bytes': 0, 'signature_bytes': 0,
+                                'ramdisk_bytes': len(ramdisk), 'image_bytes': len(image)},
+                  'parameters': {'cpus': args.cpus, 'unique_chip_id': args.unique_chip_id,
+                                 'chip_id': chip_id, 'root_match_volume_uuid': root_uuid},
+                  'hardware_dtb': {'path': str(dtb), 'bytes': dtb.stat().st_size, 'sha256': sha256(dtb)},
+                  'adt_bytes': len(adt), 'adt_sha256': hashlib.sha256(adt).hexdigest(),
+                  'boot_manifest_bytes': len(manifest), 'boot_manifest_sha256': hashlib.sha256(manifest).hexdigest(),
+                  'boot_args': boot_args, 'payload_bytes': payload.stat().st_size,
+                  'payload_sha256': sha256(payload), 'image_sha256': sha256(target),
+                  'hardware_tested': False}
+        (work / 'boot/diting-boot.json').write_text(json.dumps(record, indent=2) + '\n')
+        (work / 'payload/diting-adt.json').write_text(json.dumps(record, indent=2) + '\n')
+        print(json.dumps(record, indent=2))
+        return
     command = [sys.executable, str(device / 'scripts/make-diting-adt-ipados18.py'),
                '--cpus', str(args.cpus),
                '--dram-size', hex(args.dram_size),

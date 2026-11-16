@@ -304,6 +304,8 @@ def main():
     parser.add_argument('--dtb', type=Path,
                         help='device tree to append to the kernel slot and generate the ADT from '
                              '(default: the DTB carried by the B1 image)')
+    parser.add_argument('--official-adt', action='store_true',
+                        help='keep the official generator ADT and patch only dynamic fields')
     parser.add_argument('--inject-gpu-addon', action='store_true',
                         help='copy --gpu-addon into Payloads/kernel.macho.gpuaddon with mtools after the '
                              'payload step instead of passing it to unixnu (the 0.95 payload-size guard '
@@ -506,7 +508,8 @@ def main():
         finalize = [sys.executable, str(device / 'scripts/finalize-diting-adt.py'),
                     '--work-dir', str(work), '--unique-chip-id', seed_hex,
                     '--cpus', str(cpus), '--hardware-dtb', str(dtb_path),
-                    '--volume-layout', str(args.volume_layout)]
+                    '--volume-layout', str(args.volume_layout),
+                    *(['--official-adt'] if args.official_adt else [])]
         completed = run_logged(finalize, device, env, logs / f'finalize-{variant}.log')
         # finalize prints its record (it names the seed): keep a redacted copy.
         (logs / f'finalize-{variant}.log').write_text(redact(completed.stdout, seed))

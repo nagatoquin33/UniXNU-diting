@@ -135,7 +135,9 @@ def audit_adt(blob, *, require_manifest=True, boot_manifest=None):
         uuid.UUID(value[:-1].decode('ascii'))
     for key in ('dram-base', 'dram-size', 'darwinboot-memory-size'):
         width(chosen, key, 8, key != 'darwinboot-memory-size')
-    width(chosen, 'random-seed', 64)
+    # xnu-12377 takes 4 x 64 seed bytes; older kernels read the first 64.
+    if len(chosen.get('random-seed', b'')) not in (64, 256):
+        raise ValueError('random-seed: expected 64 or 256 bytes')
     if 'root-matching' in chosen:
         value = chosen['root-matching']
         if not value.endswith(b'\0'):
