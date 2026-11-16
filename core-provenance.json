@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "core_commit": "fd2f4d17833fb8439a801cd8bad85beef7b363f4",
-  "branch": "sync/upstream-20261116",
+  "branch": "dev",
   "upstream_commit": "03129b6d33395a0a57715b1673e7e5ce3b516e10",
   "merge_parent": "00b841547946103eb5035a2bf974ddde03ba73a5",
   "device_commit": "59c88c87ae8d7d210b1a15302ae546e400adb425",
@@ -49,5 +49,8 @@
     "libdispatch-1521.140.2",
     "libplatform-349.140.6"
   ],
-  "evidence_path": "build-work/evidence-20261116-core-sync/README.md"
+  "evidence_path": "build-work/evidence-20261116-core-sync/README.md",
+  "branch_tip": "97e6c929613c527f338b3c2e703daf5e436fc86a",
+  "integration_branch": "dev",
+  "note": "fork keeps only main and dev; old sync/* and feature branches are retired; dev is the integration branch (fd2f4d1 + feat/adt-arm-io 8968f72); core_commit stays the verified build pin and is an ancestor of dev"
 }

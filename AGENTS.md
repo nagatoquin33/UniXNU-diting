@@ -1472,3 +1472,17 @@ work is the boot itself, not the inputs.
     `/home/nagatoquin/unixnu/diting-rebase` 一并移除）。整理后远端/本地仅 `main` 与 `dev`，worktree 仅主检出。
 - 边界：`dev` 未合入 `main`；`main` 的 ADT 默认仍是旧 binary-patch 路径，`feat/adt-arm-io`（核心 fork `8968f72`）待设备
   A/B 后再按 `build-work/evidence-20261116-adt-gen/merge-checklist.md` 合入。
+
+## 2026-11-16 — 核心 fork 收敛为 main+dev，provenance 指向 dev
+
+- 核心 fork（`nagatoquin33/UniXNU`）现在只保留两条分支：`main` @ `377f0ffab21a0c22a61afa9398f6d55b1e8cfa27`、
+  `dev` @ `97e6c929613c527f338b3c2e703daf5e436fc86a`（= `fd2f4d1` + `feat/adt-arm-io` `8968f72`）。
+  旧 `sync/*`、feature 分支已归档为 bundle 并从 fork 删除（14 archived / 12 deleted earlier）。
+- 构建验证 pin 不变：**`fd2f4d1`**（kernel exit 0、core kernel 73,719,808 B `67b5199e…`、IOGPU kernel 73,773,056 B
+  `7ed899e5…`、storage/porting PASS）；`fd2f4d1` 是 `dev` 的祖先，`feat/adt-arm-io` 只改 `devicetree.py` 的
+  `[adt.arm-io]` 支持，未参与已验证内核的构建。provenance 记录改为 `branch: "dev"`、`branch_tip: 97e6c92…`，
+  并注明旧 `sync/*` 已退役、`dev` 为集成分支（`core-provenance.json`）。
+- diting-ci：`main` @ `1b83f44`（分支策略 + ADT 文档）、`dev` @ `03cb8b7`（= main + `fix/adt-gen` + 策略文档），
+  与 `docs/ARCHITECTURE.md` §5/§6 的现状段一致；`docs/STATUS.md` 的 core 行与分支状态行同步。
+- 后续：`dev` 里的官方 ADT 路径（`fix/adt-gen` + 核心 `feat/adt-arm-io`）仍需设备 A/B 通过后才并入 `main`；
+  pin 升级到 `dev` 之前需要在 `dev` 上重做内核构建与 storage/porting 校验。本轮只改文档/provenance，未上机、未派 CI。

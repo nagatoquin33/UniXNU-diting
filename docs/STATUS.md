@@ -10,12 +10,12 @@
 | 项 | 值 |
 | --- | --- |
 | 启动镜像 | `boot_a` = `diting-addon18.img`（进桌面、Metal 已测） |
-| core 钉版 | `fd2f4d1`（`sync/upstream-20261116`；upstream `03129b6` + 本地 `00b8415`，device `59c88c8` 验证：kernel exit 0、storage/porting PASS；见根目录 `core-provenance.json`） |
+| core 钉版 | `fd2f4d1`（已验证 pin；核心 fork `dev` @ `97e6c92` = `fd2f4d1` + `feat/adt-arm-io` `8968f72`，upstream `03129b6` + 本地 `00b8415`；device `59c88c8` 验证：kernel exit 0、IOGPU `7ed899e5…`、storage/porting PASS；见 `core-provenance.json`） |
 | OS | Diting 布局：`/sbin/launchd` = `/diting/init` sha256 `95cb7341…`；`libditing-ui18.dylib` 174,976 B，含 `/dev/diting-touch`；卷 UUID `B07DF049…` |
 | userdata | 整盘 sparse 恢复：`userdata-osditing-1109.sparse.img`（19,411,252,824 B，OS 窗口来自 `artifacts/ci-42987806310/diting-ipados18-system.cdr`，6,845,104,128 B sha256 `27c507c8972275c9170806bb975b03d762ebbb9379945b890d5665a154e8102d`） |
 | 待上机候选 | `D:\ai\diting\build-work\diting-addon24-diag.img`（`54ed270b…`）、`diting-addon26-diag.img`（`ee7278b2…`）、`diting-addon27-diag.img`（`d0b0e1e1…`）、`diting-addon28-diag.img`（`8cdd951d…`）、`diting-addon29-diag.img`（`4fadc124…`，addon28 的 GPU trace/pixel 变体），静态检查 PASS，`hardware_tested=false` |
 | ADT 官方路径候选 | `image-candidate-release-v4-cpus1.img`（`9bf5ea50…`；ADT `4ac18849…` 15,352 B，CRC `0xda0f09a9`）与旧 ADT 对照 `image-candidate-oldadt-release-v4-cpus1.img`（`47e6b744…`；ADT `cdc7b8cc…`，CRC `0x2f129509`）；两者 args/manifest/kernel `ddccc812…`/addon `8ea462a3…`/layout 一致，仅 ADT 与 payload FAT/CRC 不同；gates contract/storage/single-core PASS；**未合并为默认**，binary-patch 路径仍是默认 |
-| 分支状态 | diting-ci `fix/adt-gen` @ `ed18043`（fork 已推）；UniXNU fork `feat/adt-arm-io` @ `8968f72`（base `fd2f4d1`，仅 fork，未开 upstream PR）；共享 core checkout 已切回 `sync/upstream-20261116`（`fd2f4d1`）；`port/official-prelink` @ `5b4df48` 保留为 pre-ADT baseline |
+| 分支状态 | diting-ci 仅 `main` @ `1b83f44` + `dev` @ `03cb8b7`；核心 fork 仅 `main` @ `377f0ff` + `dev` @ `97e6c92`（= `fd2f4d1` + `feat/adt-arm-io` `8968f72`）；旧 `sync/*` 与 feature 分支已归档/删除；`dev` 未合入 `main` |
 | 代码备份 | `/home/nagatoquin/unixnu/backups/diting-ci-before-rpmh-slot-20261115` |
 
 ## 已实机证实
