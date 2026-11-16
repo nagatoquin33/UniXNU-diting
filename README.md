@@ -11,23 +11,33 @@ Redmi K50 至尊版（`diting` / Qualcomm SM8475）的 UniXNU 格式 2 设备仓
 - 本设备：[格式 2 配置](migration/format2/README.zh.md)、[系统迁移](migration/ipados18/README.zh.md)、
   [结构化移植记录](porting.toml)、[AGENTS.md](AGENTS.md)、[当前状态](docs/STATUS.md)、[来源说明](docs/PROVENANCE.md)
 
-## 当前状态（2026-11-15）
+## 当前状态（2026-11-16）
 
 **已在 Diting 真机观察到的结果**（逐条见 `AGENTS.md` 与 `docs/STATUS.md`）：
 
-- **桌面**：addon16（cpus=1、Wi-Fi 关闭）进入 iPadOS 桌面并稳定运行；addon16-full / addon17（cpus=8）同样进入桌面。
-- **Metal / GPU**：addon16-full 有 Vulkan-backed 设备、3 条实际 `GPU scanout copy completed status=0`、10240 submits / 10239 completed；addon17 为 9216 / 9215。逐应用兼容性与帧率未验收。
-- **触摸**：Goodix GT9916（Berlin-D，SPI 0x990000）已通电、握手并产生 digitizer 事件，**可用但异常卡顿**（2026-11-14），THP 主机触点处理仍在调优。
-- **插件与持久化**：六件 GPU addon 分块同步写入、Data 同步后重命名并挂载；重启后 Recovery 回读 `written=0 same=6 failed=0`，Extensions stage/status=5/0。
-- **启动参数**：PID 1 `exec /sbin/launchd` 的 EFAULT 已由独立 scratch 页修复，addon16 起不再复现。
+- **桌面与触摸**：Diting 布局 OS（`/sbin/launchd` = `/diting/init`，sha256 `95cb7341…`；`libditing-ui18.dylib`
+  174,976 B 通过 `/dev/diting-touch` 消费事件）经整盘 userdata sparse 恢复后，addon18 启动到
+  iPadOS 18.7.10 桌面，Goodix GT9916 触摸可用（点击、滑动、拖动）。Pong 时代布局（`/pong`、
+  `libpong-ui18`）与本机触摸桥不兼容。
+- **GPU / Metal 硬件路径**：真机已出现 `DITING ADRENO: CP ready`、两条 `DITING METAL` 行、
+  `DITING SCANOUT ... status=0` 与 GPU submits 记录；UI 帧率仍不平滑（见阻塞）。
+- **其余已测**：八核 CPU0–7 均 `first boot completed`；六/七件 GPU/ADSP addon 分片同步写入后持久化
+  （`written=0 same=6/7`，Extensions stage/status 5/0）；PID 1 `exec /sbin/launchd` 的 EFAULT 已修复。
 
 **当前阻塞**（真机日志定位，非推断）：
 
-- **Wi-Fi**：addon16-full / addon17 在 PCIe 训练前，第一笔 smpe2 高位设置 `0x40508=7` 报 RPMh response timeout，未进入扫描。原厂 DT 的活动 TCS 为 TCS0–2，TCS4 是休眠槽；addon18 已将共享请求改为 TCS1，**已构建、未上机**。
-- **电量 / ADSP**：addon17 写入原厂签名 ADSP 后，ADSP 走到 stage 6，stage 7 的共享 RPMh `0x30030=7` 同样超时（-60），尚未到 PAS 加载或电池服务发布。
-- 当前设备停在临时 Recovery；下一版为 `D:\ai\diting\build-work\diting-addon18.img`，退路为已验证的 `diting-addon16-full.img`。
+- **Wi-Fi**：首笔 smpe2 RPMh 投票 `0x40508=7` 在 PCIe 训练前超时，未进入扫描。
+- **电量 / ADSP**：ADSP 到达 stage 6，stage 7 的 `0x30030=7` 超时（-60），尚未发布电池服务。
+- **UI 帧率**：Metal pipeline 编译未摊销（插件已改为内嵌 primelist）、shader cache 不落盘，导致卡顿；
+  这是下一步 GPU 工作项。
+- **关机**：内核当前没有 poweroff 路径，长按电源不能关机；下一候选内核包含 PSCI SYSTEM_OFF 长按补丁。
 
-**未达成、不得声称可用**：Wi-Fi 扫描/关联/DHCP、电量与充电状态、Metal 逐应用兼容性与性能、音频（live DT 为双 CS35L41，尚未接入）、休眠唤醒。
+**待验证镜像**（静态检查 PASS，`hardware_tested=false`）：`diting-addon24-diag.img`
+（`54ed270b…`，`e991983d` 内核 + primelist 插件）与 `diting-addon26-diag.img`
+（`ee7278b2…`，重建 release 内核含 pwrkey/PSCI SYSTEM_OFF、TCS1、touch-latency、primelist 与 7 文件 addon）。
+
+**未达成、不得声称可用**：Wi-Fi 扫描/关联/DHCP、电量与充电、Metal 逐应用兼容性与稳定帧率、
+音频（live DT 为双 CS35L41，尚未接入）、休眠唤醒、按键关机。
 
 ## 组件与来源
 

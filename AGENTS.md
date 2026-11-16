@@ -1303,3 +1303,25 @@ work is the boot itself, not the inputs.
   `diting_adsp-fw=/private/var/ngpu/firmware`、`diting_ufs_stall=0`，`--arg` 仍可覆盖）并要求 `--gpu-addon`；
   addon23（`f5bb6e72…`，kernel `9b8e4c6b…`、7 文件 addon）已构建但未观察。
 - 本轮只做只读回读与离线分析：没有 flash/dd/写分区、没有 CI、没有 push；设备回到 TWRP recovery。
+
+## 2026-11-16 — 桌面与触摸里程碑
+
+- 设备状态：`boot_a` = addon18；OS 为 Diting 布局（`/sbin/launchd` = `/diting/init` sha256 `95cb7341…`，
+  `libditing-ui18.dylib` 174,976 B 含 `/dev/diting-touch`），经整盘 userdata sparse 恢复
+  （`userdata-osditing-1109.sparse.img` 19,411,252,824 B；OS 窗口 = `artifacts/ci-42987806310/diting-ipados18-system.cdr`
+  6,845,104,128 B sha256 `27c507c8972275c9170806bb975b03d762ebbb9379945b890d5665a154e8102d`）。
+  上机结果：iPadOS 18.7.10 桌面，Goodix GT9916 触摸点击/滑动/拖动可用。Pong 时代布局
+  （`/pong/init` `a80747bb…`、`libpong-ui18.dylib` `28d133d0…`）与本机触摸桥不兼容。
+- GPU/Metal 硬件路径：真机日志有 `DITING ADRENO: CP ready`、`DITING METAL: real IOAcceleratorES provider published`、
+  `… status=0x0`、`DITING SCANOUT … status=0x0`，GPU submits 有记录；UI 帧率仍受 Metal pipeline 编译未摊销
+  （插件已内嵌 `__DATA,__primelist`）与 shader cache 不落盘限制，列为下一 GPU 工作项。
+- 阻塞：Wi-Fi 首笔 smpe2 RPMh `0x40508=7` 在 PCIe 前超时；ADSP stage 6→7 `0x30030=7` 超时（-60），无电池发布；
+  内核无 poweroff 路径，长按电源不能关机（PSCI SYSTEM_OFF 长按补丁在下一候选内核）。
+- 待上机镜像（静态检查 PASS，`hardware_tested=false`）：`D:\ai\diting\build-work\diting-addon24-diag.img`
+  （`54ed270b31aa223e46b5603c0a25481de58bf93424e8d01a0b698a6968fcf9f4`，`e991983d…` 内核 + primelist 插件）与
+  `diting-addon26-diag.img`（`ee7278b260ffa0f3c2cb8fcb28ee0263f26d30edd31123eaccc18937dfe15edc`，重建 release 内核
+  `20834d3c0770db2e6f2ad7238b3bcfd2cd1b4e2508dc01b766c08a0142a6b6e3`，含 pwrkey/PSCI SYSTEM_OFF、TCS1、
+  touch-latency、primelist 与 7 文件 addon）。
+- 证据：`build-work/ramoops-addon16*.bin`、`ramoops-addon17.bin`、`ramoops-addon18c.bin`；
+  `build-work/evidence-20261115-gpu-framerate/`、`evidence-20261115-gpu-prime/`、`evidence-20261116-addon26/`、
+  `evidence-20261116-pwrkey/`；`build-work/evidence-20261115-touch-lag/`。

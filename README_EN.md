@@ -9,40 +9,39 @@ Format 2 device support for the Redmi K50 Ultra (`diting`), Qualcomm **SM8475**.
 - [Format 2 integration](migration/format2/README.zh.md), [OS migration](migration/ipados18/README.zh.md), [porting record](porting.toml),
   [status](docs/STATUS.md), [provenance](docs/PROVENANCE.md)
 
-## Status (2026-11-15)
+## Status (2026-11-16)
 
 **Observed on Diting hardware** (each item traced in [`AGENTS.md`](AGENTS.md) and
 [`docs/STATUS.md`](docs/STATUS.md)):
 
-| Area | Device result |
-| --- | --- |
-| CPU / memory | X2 + 3x A710 + 4x A510 (4+3+1), PSCI/GICv3, 19.2 MHz timer, native 4 KiB pages, 12 GiB RAM. CPU0-7 all report `first boot completed` on addon16-full / addon17. |
-| Desktop | addon16 (`cpus=1`, Wi-Fi off) reaches the iPadOS desktop and keeps running; addon16-full / addon17 (`cpus=8`) also reach the desktop. |
-| Metal / GPU | addon16-full: Vulkan-backed device, 3 actual `GPU scanout copy completed status=0`, 10240 submits / 10239 completed; addon17: 9216 / 9215. Per-app compatibility and frame rate are not validated. |
-| Touch | Goodix GT9916 (Berlin-D, SPI `0x990000`) powers up, handshakes and produces digitizer events; **works but is very laggy** (2026-11-14). THP host-side touch processing is still being tuned. |
-| Plugins / persistence | Six GPU addon files are synced, renamed and mounted after Data sync; a Recovery readback after reboot reports `written=0 same=6 failed=0` and Extensions stage/status 5/0. |
-| launchd | The PID 1 `exec /sbin/launchd` EFAULT is fixed by separate scratch pages; not reproduced since addon16. |
-| Storage | NativeUfs with the SHNGROOT v1 OS/SystemOS/Data windows; launchd and userspace run from them on Diting, and addon16+ reach the desktop. |
+- **Desktop and touch**: with the Diting-layout OS (`/sbin/launchd` = `/diting/init`, sha256 `95cb7341...`;
+  `libditing-ui18.dylib` 174,976 B consuming events through `/dev/diting-touch`) restored through the
+  whole-userdata sparse path, addon18 boots to the iPadOS 18.7.10 desktop and the Goodix GT9916 touch
+  works (tap, swipe, drag). The Pong-era layout (`/pong`, `libpong-ui18`) is not compatible with this
+  device's touch bridge.
+- **GPU / Metal hardware path**: the device log shows `DITING ADRENO: CP ready`, both `DITING METAL`
+  lines, `DITING SCANOUT ... status=0` and GPU submits; the UI is still not smooth (see blockers).
+- **Also verified**: CPU0-7 all report `first boot completed`; the six/seven GPU/ADSP addon files persist
+  after chunked sync writes (`written=0 same=6/7`, Extensions stage/status 5/0); the PID 1
+  `exec /sbin/launchd` EFAULT is fixed.
 
 **Current blockers** (located in device logs, not inferred):
 
-- **Wi-Fi**: addon16-full / addon17 time out on the first smpe2 high-word write (`0x40508=7`) before PCIe
-  training, with an RPMh response timeout and no scan. The live DT's active TCS set is TCS0-2 and TCS4 is the
-  sleep slot; addon18 switches the shared requests to TCS1 and is built but not booted yet.
-- **Battery / ADSP**: after addon17 writes the signed stock ADSP, ADSP reaches stage 6 and stage 7 times out
-  on the shared RPMh `0x30030=7` (-60); PAS loading and battery-service publication are not reached.
-- The device currently sits in temporary Recovery. The next image is
-  `D:\ai\diting\build-work\diting-addon18.img`; the verified fallback is `diting-addon16-full.img`.
+- **Wi-Fi**: the first smpe2 RPMh vote (`0x40508=7`) times out before PCIe training; no scan is reached.
+- **Battery / ADSP**: ADSP reaches stage 6 and stage 7 times out on `0x30030=7` (-60); battery service
+  is not published.
+- **UI frame rate**: Metal pipeline compilation is not amortized (the plugin now embeds a primelist) and
+  the shader cache is not persisted, which limits smoothness; this is the next GPU work item.
+- **Power-off**: the kernel has no poweroff path, so holding the power button cannot power the device
+  off; the next candidate kernel carries a PSCI SYSTEM_OFF long-press patch.
 
-**Not achieved — do not claim usable**: Wi-Fi scan/association/DHCP, battery and charging state, per-app Metal
-compatibility and performance, audio (the live DT has dual CS35L41, not integrated), suspend/resume.
+**Ready but not device-tested** (static checks PASS, `hardware_tested=false`): `diting-addon24-diag.img`
+(`54ed270b...`, `e991983d` kernel + primelist plugin) and `diting-addon26-diag.img` (`ee7278b2...`,
+fresh release kernel with pwrkey/PSCI SYSTEM_OFF, TCS1, touch-latency, primelist and the 7-file addon).
 
-Host build results and device functionality are recorded separately. Several `porting.toml` and
-`migration/ipados18/` records are inherited from Pong (Nothing Phone 2, same SM8475) hardware history - for
-example the audible TFA9873 audio/ringtone and some Wi-Fi/storage conclusions. They are implementation
-references, **not Diting evidence**. Diting-only conclusions live in [`AGENTS.md`](AGENTS.md) and
-[`docs/STATUS.md`](docs/STATUS.md); the source split is documented in
-[`docs/PROVENANCE.md`](docs/PROVENANCE.md).
+**Not achieved - do not claim usable**: Wi-Fi scan/association/DHCP, battery and charging, per-app Metal
+compatibility and stable frame rate, audio (the live DT has dual CS35L41, not integrated), suspend/resume,
+power-key shutdown.
 
 ## Driver repositories
 
