@@ -56,5 +56,5 @@
 ## 5. 上游同步
 
 - 参照检出：`/home/nagatoquin/unixnu/UniXNU-upstream`（detached，`origin/main`），只读；
-- 工作内核钉版：core `0ce9779`（`core-provenance.json`），升级需单独验证；
+- 工作内核钉版：core `fd2f4d1`（`sync/upstream-20261116`；upstream `03129b6` + 本地保留提交 `00b8415`），见根目录 [`core-provenance.json`](../core-provenance.json)。升级需重做内核构建与 storage/porting 校验；首次干净构建前需清理 diting-ci 的 4 个过期 refer 软链（见该文件的 `prerequisite_refer_cleanup`）。
 - 同步原则：先 fetch 阅读上游变更（文档、契约、组件），再决定是否 bump 钉版；不向上游推送。

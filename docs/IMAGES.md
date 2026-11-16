@@ -21,14 +21,16 @@
 
 ## 2. userdata 与系统窗口
 
+> 回退资产（`ipados18-source/`、`windows/Data.img`、`prepared-420734-os.img`）已从 D: `build-work` 移到 WSL `/home/nagatoquin/unixnu/rollback-assets/`；D: `build-work` 现约 26 GB，`userdata-osditing-1109.sparse.img` 仍在 D:。
+
 | 产物 | 用途 | 大小 | 说明 |
 | --- | --- | --- | --- |
 | `userdata-osditing-1109.sparse.img` | 当前可用恢复镜像：11-09 raw + Diting OS 窗口（`27c507c8…`） | 19,411,252,824 | sha256 `6c455decba368a736426aa5cbd8d3246eb52aa93c1e067f95eddfb9bb81d136e` |
 | `out/userdata/userdata-osditing-1109.img` | 上者的 raw 源 | 19,411,238,912 | 保留，可重建 sparse |
 | `out/userdata/userdata-root.img` | 11-09 基础 raw（Pong 布局 OS，仅作容器/回退素材） | 19,411,238,912 | sha256 `a30ed367…` |
-| `prepared-420734-os.img` | OS 窗口回退镜像（11-09 原始内容） | 6,845,104,128 | sha256 `45b6344f8a23f9943ff8660ecfcc929f38bd1c87cf14d8fdaa8d7dd289f23fda` |
-| `windows/Data.img` | Data 窗口回退（UUID 337CF716） | 8,589,934,592 | sha256 `1378adfe62916cf2cc01dfdca23ab847f489636a4790809024a3ab219b7f4095` |
-| `ipados18-source/{OS,SystemOS,AppOS}.dmg` | 一次制备用还原源 | 约 11 GiB | 只读资产，保留 |
+| `/home/nagatoquin/unixnu/rollback-assets/prepared-420734-os.img` | OS 窗口回退镜像（11-09 原始内容） | 6,845,104,128 | sha256 `45b6344f8a23f9943ff8660ecfcc929f38bd1c87cf14d8fdaa8d7dd289f23fda` |
+| `/home/nagatoquin/unixnu/rollback-assets/windows/Data.img` | Data 窗口回退（UUID 337CF716） | 8,589,934,592 | sha256 `1378adfe62916cf2cc01dfdca23ab847f489636a4790809024a3ab219b7f4095` |
+| `/home/nagatoquin/unixnu/rollback-assets/ipados18-source/{OS,SystemOS,AppOS}.dmg` | 一次制备用还原源 | 约 11 GiB | 只读资产，保留 |
 
 ## 3. 重建入口
 

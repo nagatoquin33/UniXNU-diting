@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "core_commit": "fd2f4d17833fb8439a801cd8bad85beef7b363f4",
+  "branch": "sync/upstream-20261116",
+  "upstream_commit": "03129b6d33395a0a57715b1673e7e5ce3b516e10",
+  "merge_parent": "00b841547946103eb5035a2bf974ddde03ba73a5",
+  "device_commit": "59c88c87ae8d7d210b1a15302ae546e400adb425",
+  "verified_at": "2026-11-16T10:50:28+08:00",
+  "previous_pin": "0ce9779",
+  "artifacts": {
+    "core_kernel": {
+      "path": "UniXNU/out/diting/ipados-18.7.10-22H374/diting_ipados18/kernel/kernel.macho",
+      "bytes": 73719808,
+      "sha256": "67b5199e445a7825c29e43960aea2ed1e7cbd85c1ec40493c23bc4ec013dd914",
+      "prelink_entries": 22,
+      "has_iogpu": false
+    },
+    "iogpu_kernel": {
+      "path": "build-work/evidence-20261116-core-sync/kernel-merged-core-iogpu.macho",
+      "bytes": 73773056,
+      "sha256": "7ed899e5d0f3c812e26f0df52fa02f129a1f4542fef858806ab33fc9011a07f8",
+      "prelink_entries": 26,
+      "has_iogpu": true
+    }
+  },
+  "verification": {
+    "kernel_build": "exit 0",
+    "storage_gate": "PASS",
+    "porting_record": "PASS 34 areas",
+    "unixnu_status": "PASS",
+    "defconfig": "PASS",
+    "markers": {
+      "Diting touch latency": 1,
+      "Diting touch THP latency": 1,
+      "cmd written tcs=": 1,
+      "timeout tcs=": 1,
+      "Diting pwrkey": 4,
+      "PSCI SYSTEM_OFF": 1,
+      "diting_pwrkey_long": 1,
+      "diting_pwrkey_log": 1,
+      "ramoops": 14,
+      "ramoops_ufs": 3,
+      "diting_ramoops_ufs": 2
+    }
+  },
+  "prerequisite_refer_cleanup": [
+    "AvailabilityVersions-143.7",
+    "IOStorageFamily-323",
+    "libdispatch-1521.140.2",
+    "libplatform-349.140.6"
+  ],
+  "evidence_path": "build-work/evidence-20261116-core-sync/README.md"
+}

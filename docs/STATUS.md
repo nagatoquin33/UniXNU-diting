@@ -10,6 +10,7 @@
 | 项 | 值 |
 | --- | --- |
 | 启动镜像 | `boot_a` = `diting-addon18.img`（进桌面、Metal 已测） |
+| core 钉版 | `fd2f4d1`（`sync/upstream-20261116`；upstream `03129b6` + 本地 `00b8415`，device `59c88c8` 验证：kernel exit 0、storage/porting PASS；见根目录 `core-provenance.json`） |
 | OS | Diting 布局：`/sbin/launchd` = `/diting/init` sha256 `95cb7341…`；`libditing-ui18.dylib` 174,976 B，含 `/dev/diting-touch`；卷 UUID `B07DF049…` |
 | userdata | 整盘 sparse 恢复：`userdata-osditing-1109.sparse.img`（19,411,252,824 B，OS 窗口来自 `artifacts/ci-42987806310/diting-ipados18-system.cdr`，6,845,104,128 B sha256 `27c507c8972275c9170806bb975b03d762ebbb9379945b890d5665a154e8102d`） |
 | 待上机候选 | `D:\ai\diting\build-work\diting-addon24-diag.img`（`54ed270b…`）、`diting-addon26-diag.img`（`ee7278b2…`）、`diting-addon27-diag.img`（`d0b0e1e1…`，GPU 上游诊断 + 完整 shader-cache 计数），静态检查 PASS，`hardware_tested=false` |

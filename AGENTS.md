@@ -1352,3 +1352,26 @@ work is the boot itself, not the inputs.
   `hardware_tested=false`。
 - 证据：`build-work/evidence-20261116-gpu-upstream/README.md`、`addon27-report.json`、`verification.json`、`logs/bridge-build.log`、
   `logs/plugin-build.log`。本轮未上机、未派 CI。
+
+## 2026-11-16 — merged core verified, pin fd2f4d1
+
+- 内核 core：`sync/upstream-20261116` merge commit `fd2f4d17833fb8439a801cd8bad85beef7b363f4`
+  （upstream `origin/main` `03129b6d33395a0a57715b1673e7e5ce3b516e10` + 本地保留提交
+  `00b841547946103eb5035a2bf974ddde03ba73a5`；merge base `0e2fb2b`）。
+- 验证：diting-ci `59c88c87ae8d7d210b1a15302ae546e400adb425`、fresh `xnu-work`，
+  `./unixnu build kernel -D ../diting-ci` **exit 0**（`kernel-build-20261116T025028Z.log`）；
+  `./unixnu status` / `defconfig` / `scripts/porting-record.py check`（34 areas）均 PASS。
+  **前置条件**：先清理 diting-ci 中 4 个未跟踪的过期 refer 软链（指向 `xnu-ci-core/out/feeds`，属生成物）：
+  `AvailabilityVersions-143.7`、`IOStorageFamily-323`、`libdispatch-1521.140.2`、`libplatform-349.140.6`。
+- 产物：core 预链接 `kernel.macho` 73,719,808 B sha256
+  `67b5199e445a7825c29e43960aea2ed1e7cbd85c1ec40493c23bc4ec013dd914`（22 个 `__PRELINK_INFO` entries，无 IOGPU）；
+  IOGPU library-only `kernel-merged-core-iogpu.macho` 73,773,056 B sha256
+  `7ed899e5d0f3c812e26f0df52fa02f129a1f4542fef858806ab33fc9011a07f8`（26 entries 含 `com.apple.iokit.IOGPUFamily`，
+  19 components / 9 library-only），`check-storage-bindings.py` PASS（9 绑定，prelink info 在组件后）。
+- markers 全部存在：`Diting touch latency`/`Diting touch THP latency`、`cmd written tcs=`/`timeout tcs=`、
+  `Diting pwrkey`×4、`PSCI SYSTEM_OFF`、`diting_pwrkey_long`/`diting_pwrkey_log`、`ramoops`/`ramoops_ufs`/
+  `diting_ramoops_ufs`。
+- pin：由 `0ce9779` 更新为 `fd2f4d1`；落盘 `core-provenance.json`（含 artifacts、verification、
+  `prerequisite_refer_cleanup`、`previous_pin`、`evidence_path`），`docs/ARCHITECTURE.md §5` 与 `docs/STATUS.md` 同步。
+- 证据：`build-work/evidence-20261116-core-sync/README.md`、`merged-core-kernel.json`、`verify-merged-kernel.py`。
+  本轮只更新文档与 provenance 记录，未上机、未派 CI；上游仓库仍只读、未推送。
