@@ -62,15 +62,15 @@
 
 按顺序只记录第一个失败阶段，不跳步、不猜测。
 
-1. **addon30-diag**（`a2158d7a…`，kernel `0c1a2c1f…` 73,781,248 B/26 IOGPU prelink；core dev `121ea7f` = upstream `9931232`/PR #272）：
-   args 52/999 与 addon29 同集（`diting_gpu_trace=1 diting_gpu_pixels=1 log-gpu=1`、pwrkey 参数、`applog_name=backboardd,SpringBoard`）；
-   GPU 侧变化只有 Turnip `6001cadb…`（PR #272 `turnip-darwin-bo-finish-clears-under-lock.patch`：BO entry 在 `retire->lock` 内复制到 `gone` 并清零后再 reap）
-   与合并 core kernel；bridge `2a4ef86d…` 与 addon29 语义一致（symbol/nm 相同），plugin `f624a7d5…` 逐字节相同。
-   确认桌面/触摸保持；冷滚 Settings/Home 30 s → 热滚 30 s → 重启再冷滚 30 s，逐项对比 addon29：
-   `[gpu slow]`（fence/queue/gpu/retire）、`T pipeline n/total/max`、`PR functions resumed`、`H frame-enc`/`frame-gpu`、
-   `G commit-to-complete`、`ctc`、`V cache h/m/w/q/rf/wf/ev`、`V drv`、`C cache dir=… shared=… writable=…`，
-   以及 `log-gpu=1` 的 `Diting Metal pass` 行；重点看 address-0 提交/GPU 故障是否消失、提交与编码尾延迟是否下降、UI 行为是否与 addon29 一致。
-   异常回 addon29（`4fadc124…`，kernel `7ed899e5…`）对照；addon26 继续用于 pwrkey/PSCI SYSTEM_OFF。
+1. **addon31 三阶段（rails → link → full；addon30 fallback）**：RAM-only 依次启动同一 addon31 的三个 args 变体（kernel `0c1a2c1f…`、
+   bridge `2a4ef86d…`、turnip `6001cadb…`、plugin `f8cb839b…` 含 167 路径 primelist、addon `735fbc6d…` 均相同，只有 `diting_wifi` 不同）：
+   - `diting-addon31-rails.img`（`73767046…`，`diting_wifi=2`）：只到 WLAN rails 投票/物理就绪、无 GCC/PCIe 写；看 `WiFi worker armed stage=2`、
+     六条 PPID 轨 + `smpe3` 的 `rail … physical ready`、`staged stop at 2:`——直接回答 W1 的 smpe3 stall 是否消失。
+   - `diting-addon31-link.img`（`cb291a2d…`，`diting_wifi=4`）：轨 + PCIe0 link trained（pre-ATU/endpoint）；看 `DitingWifi: PCIe0 ELBI=… link=… PHY=… LTSSM=…`、
+     `training attempt=… target=Gen…`、`staged stop at 4:`。
+   - `diting-addon31-full.img`（`67208eeb…`，`diting_wifi=1`）：完整路径；看 SMMU `program status=…`、MHI/QMI、`ath11k start failed=0`、扫描/关联；
+     同时采集 addon30 的 GPU 观测项（`[gpu slow]`、`T pipeline`、`PR resumed`、`H frame-enc`、`ctc`、`V cache`、`V drv`、`C cache dir`）。
+   任一步异常/桌面回归时回 addon30（`a2158d7a…`，kernel `0c1a2c1f…`）作同 kernel 对照；addon26 继续用于 pwrkey/PSCI SYSTEM_OFF。
 2. **ADT 官方路径 A/B（未合并前不设默认）**：RAM-only 先启 `image-candidate-release-v4-cpus1.img`（`9bf5ea50…`，ADT `4ac18849…`），
    再启 `image-candidate-oldadt-release-v4-cpus1.img`（`47e6b744…`，ADT `cdc7b8cc…`）作对照；两镜像除 ADT/payload CRC 外逐项相同。
    记录：无 AppleARMCPU panic/IOKit 匹配回归、桌面/触摸、`/cpus`（单 CPU、无 `/psci`、cpu0 `cluster-type`）、`/chosen/memory-map` 的 `GpuAddon` 区间、
