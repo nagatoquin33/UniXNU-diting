@@ -1554,19 +1554,23 @@ work is the boot itself, not the inputs.
 ## 2026-11-16 — WiFi 阶段分析（来自 ramoops，无设备动作）
 
 - 证据：`build-work/evidence-20261116-wifi-stage/README.md` 2,191 B sha256
-  `095c9544771f1022a08449070429515703b30993fa9d61750d270212862c3481`；来源 `ramoops-addon18c.bin`（kernel `9b8e4c6b` 家族，
+  `065f12fdc8219a41058292a2f56e8fccab0b5e8c28375a6c3a30d63848de001a`（初版 `095c9544…` 轨表不完整，已更正）；来源 `ramoops-addon18c.bin`（kernel `9b8e4c6b` 家族，
   未含 TCS 修复）与 `ramoops-addon19.bin`（RPMh TCS1 证据镜像 `102fd293…`）。
 - addon18c（旧内核）停在 **W1**：`DitingWifi[6]: rail smpe2 a=40500` → `Diting resources: RPMh response timeout; transaction retained`
   → `DitingWifi[3]: rail vote hi failed` → `WiFi initialization stopped; normal iOS boot continues, DMA retained`；首笔 rail
   投票未提交，WiFi 优雅放弃，无 panic。
-- addon19（TCS1 镜像）TCS 写路径可用：每次 `cmd written tcs=1` → `triggered, polling` → `committed`，四条轨到 physical ready：
-  smpb10 PPID `0x1b6` 1800mV（status=0x9f/enable=0x80）、smpc1 `0x29b` 1900mV、smpb12 `0x1bc` 1350mV（status=0x97/enable=0x80）、
-  ldoe7 2800mV（ready logged）。随后 smpe3 电压投票 `43400=2200` **committed**，enable 投票 `43404=1` 打印
-  `pre`/`caps=800c8104`/`cmd written tcs=1`/`triggered, polling` 后日志结束：无 smpe3 `physical ready`、无 PCIe0 行、无失败行。
+- addon19（TCS1 镜像）TCS 写路径可用：每次 `cmd written tcs=1` → `triggered, polling` → `committed`。轨表以
+  `DitingWifiInputs.h` `kDitingWifiRails` 为准（九项）：smpe2 1012mV/`0x49e`/type28/sub14、smpb11 966/`0x1b9`、smpb10 1800/`0x1b6`、
+  smpc1 1900/`0x29b`、smpb12 1350/`0x1bc`、ldoe7 2800/PPID 0、smpe3 2200/`0x4a1`、ldoc10 1200/PPID 0、ldob5 880/PPID 0
+  （PPID 0 = 共享模拟 LDO，无 observer，跳过）。按顺序重读 ramoops-addon19：**六条轨** smpe2、smpb11、smpb10、smpc1、smpb12、ldoe7
+  先后 `physical ready`（smpe2 PPID=`0x49e` 1012mV status=0x8f enable=0x80；smpb10 status=0x9f、smpc1 0x9f、smpb12 0x97），
+  ldoc10/ldob5 按设计跳过；随后 smpe3 电压投票 `43400=2200` **committed**，enable 投票 `43404=1` 打印
+  `pre`/`caps=800c8104`/`cmd written tcs=1`/`triggered, polling` 后日志结束：无 smpe3 `physical ready`、无 PCIe0 行、无失败行
+  ——六条已过，第七个（smpe3）是 stall 点。
 - 解释：addon19 上 WiFi init 阻塞在 **smpe3 enable 投票完成**（早于 `DitingWifi: PCIe0 ELBI=…`）。`rpmh-tcs0` patch
   （`TCS(reg) = rsc + 0xd00 + reg`，替代先前 `+ 4*0x2a0` 的 TCS4 sleep slot）已在当前 series 与 addon26+ 内核，
   首次 addon26/30 启动将验证 smpe3 是否提交并把日志推进到 PCIe0。
-- W1 通过判据：五条轨（smpb10/smpc1/smpb12/ldoe7/smpe3）全部 `cmd written tcs=1` → `committed` → `physical ready`；
+- W1 通过判据：`kDitingWifiRails` 中每个带 PPID 的表项按顺序 `cmd written tcs=1` → `committed` → `physical ready`（ldoc10/ldob5 无 PPID 跳过）；
   预期后续 markers：`DitingWifi: PCIe0 ELBI=… link=… PHY=… LTSSM=…`、`training attempt=… target=Gen…`、
   `SMMU program status=…`、MHI/QMI 行、`ath11k start failed=0`。
 - 本轮只记录，未上机、未派 CI。
