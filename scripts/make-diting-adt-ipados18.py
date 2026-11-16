@@ -137,6 +137,8 @@ def main():
                         help='validated iOS 22H374 SystemVolume root-hash payload for /chosen')
     parser.add_argument('--packed-data-ramdisk', action='store_true',
                         help='publish a DarwinBoot PackedRAMDisk range for an ephemeral APFS Data seed')
+    parser.add_argument('--gpu-addon', action='store_true',
+                        help='reserve the DarwinBoot GpuAddon memory-map slot (/chosen/memory-map/GpuAddon)')
     parser.add_argument('--skip-image-verification', action='store_true',
                         help='emit the DT without an additional output audit')
     args = parser.parse_args()
@@ -294,8 +296,12 @@ def main():
         ('#address-cells', struct.pack('<I', 2)),
         ('#size-cells', struct.pack('<I', 2)),
     ], [
-        node('chosen', chosen, [node('memory-map',
-            [('PackedRAMDisk', bytes(16))] if args.packed_data_ramdisk else []),
+        node('chosen', chosen, [node('memory-map', [
+            *([('PackedRAMDisk', bytes(16))] if args.packed_data_ramdisk else []),
+            # DarwinBoot rejects a payload whose kernel.macho.gpuaddon has no
+            # /chosen/memory-map/GpuAddon placeholder (16 zero bytes it fills in).
+            *([('GpuAddon', bytes(16))] if args.gpu_addon else []),
+        ]),
             node('manifest-properties', [('BNCH', boot_nonce_hash)])]),
         node('cpus', [('#address-cells', struct.pack('<I', 1))], cpus),
         node('arm-io', [

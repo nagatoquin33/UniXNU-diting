@@ -102,6 +102,29 @@ def patch_official_adt(blob, manifest, root_uuid):
     return _encode_adt(tree)
 
 
+def ensure_gpu_addon_slot(blob, present):
+    """Keep /chosen/memory-map/GpuAddon in sync with the payload's gpuaddon.
+
+    DarwinBoot requires a 16-byte zero placeholder when kernel.macho.gpuaddon
+    exists and fails with EFI_COMPROMISED_DATA when the placeholder and the file
+    disagree (DarwinBoot.c AddonOffset checks / READ GPUADDON stage). The
+    official generator already writes it for addon payloads; the make-diting-adt
+    path needs it added here.
+    """
+    tree = _parse_adt(blob)
+    chosen = _find_adt(tree, 'chosen')
+    try:
+        memory_map = _find_adt(chosen, 'memory-map')
+    except SystemExit:
+        memory_map = {'props': [('name', b'memory-map\0')], 'children': []}
+        chosen['children'].append(memory_map)
+    if present:
+        _set_adt(memory_map, 'GpuAddon', bytes(16))
+    else:
+        memory_map['props'] = [item for item in memory_map['props'] if item[0] != 'GpuAddon']
+    return _encode_adt(tree)
+
+
 MANIFEST_FORMAT = 'pong-development-boot-manifest-v1'
 BOARD = 'Nothing Phone (2) / Diting / SM8475'
 
@@ -233,6 +256,8 @@ def main():
         'root_volume_uuid': root_uuid,
         'requested_memory_window_bytes': args.window_size,
     }, sort_keys=True, separators=(',', ':')).encode() + b'\n'
+    payload_addon = read_member(payload, 'EFI/UniXNU/Payloads/kernel.macho.gpuaddon')
+    addon_present = payload_addon is not None
     manifest_file = work / 'payload/pong-boot-manifest.json'
     manifest_file.write_bytes(manifest)
 
@@ -245,6 +270,7 @@ def main():
         if not current:
             raise SystemExit('payload has no generator ADT for --official-adt')
         adt = patch_official_adt(current, manifest, root_uuid)
+        adt = ensure_gpu_addon_slot(adt, addon_present)
         (work / 'payload/kernel.macho.adt.diting').write_bytes(adt)
         write_member(payload, 'EFI/UniXNU/Payloads/kernel.macho.adt', adt)
         write_member(payload, 'EFI/UniXNU/Payloads/pong-boot-manifest.json', manifest)
@@ -261,6 +287,7 @@ def main():
                                  'chip_id': chip_id, 'root_match_volume_uuid': root_uuid},
                   'hardware_dtb': {'path': str(dtb), 'bytes': dtb.stat().st_size, 'sha256': sha256(dtb)},
                   'adt_bytes': len(adt), 'adt_sha256': hashlib.sha256(adt).hexdigest(),
+                  'gpu_addon_slot': addon_present,
                   'boot_manifest_bytes': len(manifest), 'boot_manifest_sha256': hashlib.sha256(manifest).hexdigest(),
                   'boot_args': boot_args, 'payload_bytes': payload.stat().st_size,
                   'payload_sha256': sha256(payload), 'image_sha256': sha256(target),
@@ -279,6 +306,8 @@ def main():
                '--boot-manifest', str(manifest_file),
                # The local chain records no image audit for this development image.
                '--skip-image-verification']
+    if addon_present:
+        command.append('--gpu-addon')
     if args.development_debug:
         command.append('--development-debug')
     if args.ufs_probe:
@@ -297,6 +326,7 @@ def main():
         environment['UNIXNU_UEFI'] = str(args.uefi.resolve())
     subprocess.run(command, cwd=device, check=True, env=environment)
     adt = generated.read_bytes()
+    adt = ensure_gpu_addon_slot(adt, addon_present)
 
     # kernel.macho.adt is what the firmware loads; pong-boot-manifest.json is the
     # unsigned description a local image carries beside it.

@@ -11,11 +11,17 @@ the old image proves nothing.
 import argparse
 import hashlib
 import lzma
+import os
+import subprocess
+import tempfile
 import struct
 import sys
 import uuid
 import zlib
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from diting_adt_contract import parse_adt
 
 LZMA_GUID = uuid.UUID("EE4E5898-3914-4259-9D6E-DC7BD79403CF")
 OLD = (b"pong-allocatable-ram", b"pong-audio-dma", b"pong_ram_banks")
@@ -110,6 +116,43 @@ def walk_sections(data, files, label, depth=0):
         off = (off + size + 3) & ~3
 
 
+def payload_member(fat, member):
+    """Read one payload file through mtools (the build hosts carry mtools)."""
+    with tempfile.TemporaryDirectory() as scratch_dir:
+        scratch = Path(scratch_dir) / 'payload.img'
+        scratch.write_bytes(fat)
+        env = dict(os.environ, MTOOLS_SKIP_CHECK='1', TZ='UTC')
+        probe = subprocess.run(['mtype', '-i', str(scratch), f'::{member}'],
+                               env=env, capture_output=True)
+        return probe.stdout if probe.returncode == 0 else None
+
+
+def check_gpu_addon(fat, failures):
+    """DarwinBoot fails with EFI_COMPROMISED_DATA when the GpuAddon slot and the
+    kernel.macho.gpuaddon file disagree (DarwinBoot.c AddonOffset checks)."""
+    addon = payload_member(fat, '/EFI/UniXNU/Payloads/kernel.macho.gpuaddon')
+    adt = payload_member(fat, '/EFI/UniXNU/Payloads/kernel.macho.adt')
+    slot = None
+    if adt:
+        try:
+            slot = parse_adt(adt).get('/chosen/memory-map', {}).get('GpuAddon')
+        except ValueError as error:
+            failures.append(f'payload ADT is unreadable: {error}')
+    if addon is not None:
+        if slot is None:
+            failures.append('payload carries kernel.macho.gpuaddon but the ADT lacks /chosen/memory-map/GpuAddon')
+        elif len(slot) != 16 or any(slot):
+            failures.append(f'ADT GpuAddon slot is {len(slot)} bytes, DarwinBoot requires 16 zero bytes')
+        if len(addon) < 24 or addon[:8] != b'NGPUADD2':
+            failures.append('gpuaddon does not start with the NGPUADD2 header')
+        else:
+            declared = int.from_bytes(addon[16:24], 'little')
+            if declared != len(addon):
+                failures.append(f'gpuaddon declares {declared} bytes but the file is {len(addon)}')
+    elif slot is not None:
+        failures.append('ADT reserves /chosen/memory-map/GpuAddon but the payload carries no kernel.macho.gpuaddon')
+
+
 def check_image(path):
     kernel, ramdisk = load_image(path)
     failures = []
@@ -145,6 +188,7 @@ def check_image(path):
     for token in OLD:
         if token in fat:
             failures.append(f"payload ADT still carries {token.decode()}")
+    check_gpu_addon(fat, failures)
     return failures
 
 
