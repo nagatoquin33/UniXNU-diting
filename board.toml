@@ -68,6 +68,36 @@ roots = ["com.apple.kec.corecrypto", "com.apple.kec.pthread", "com.apple.filesys
          "com.apple.kec.Compression", "com.apple.AppleFSCompression.AppleFSCompressionTypeZlib",
          "com.apple.iokit.IOGPUFamily"]
 
+[adt.root.string]
+model = "iPhone17,1"
+target-type = "J171"
+target-sub-type = "J171AP"
+"diting,physical-model" = "Nothing Phone (2)"
+
+[adt.root.strings]
+compatible = ["J171AP", "iPhone17,1", "qcom,sm8475"]
+
+[adt.product.string]
+product-name = "iPhone 16 Pro"
+product-description = "iPhone 16 Pro"
+artwork-device-idiom = "phone"
+artwork-dynamic-displaymode = "0"
+artwork-display-gamut = "sRGB"
+compatible-device-fallback = "iPhone17,1"
+compatible-app-variant = "0"
+
+[adt.product.u32]
+artwork-device-subtype = 2622
+device-perf-memory-class = 3
+thin-bezel = 1
+allow-32bit-apps = 0
+ephemeral-data-mode = 0
+udid-version = 1
+artwork-scale-factor = 3
+
+[adt.defaults.u32]
+sleep-disabled = 1
+
 [adt.chosen.u32]
 display-scale = 3
 display-rotation = 0
