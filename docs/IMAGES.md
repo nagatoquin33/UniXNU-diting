@@ -20,12 +20,12 @@
 | `image-candidate-oldadt-release-v4-cpus1.img` | 同候选的旧 binary-patch ADT 对照（args/manifest/kernel/addon/layout 逐项相同，仅 ADT 与 payload FAT/CRC 不同）：ADT `cdc7b8cc…` 14,112 B，CRC `0x2f129509` | 101,187,584 | `47e6b744b495a9671f636d6507d9ebe687bb8e58487238b808c175bad1bbb287` |
 | `diting-recovery-boot.img` | TWRP RAM Recovery（ramoops/APFS 回读） | 127,148,032 | `67cf2dc9d247815bc5be8c33f4c717b5833f13ca93a4d371ce796bfa0c3c2d6a` |
 | `b1-darwinboot24/diting-unixnu-uefi-darwinboot24.img` | B1 DarwinBoot24 bring-up 基线 | 101,187,584 | `285e6afa1f4291f10839619fbc06d09ce08842ac14d7143be20756d4c8f106fa` |
-| `greenI2-log-menu.img` | Advanced Logger 菜单镜像（回读通道） | — | 见 AGENTS.md 回退资产清单 |
-| `diting-boot-launchd-unsecure.img` | 旧 launchd 阶段回退 | — | `cb56ac9d…`（见 AGENTS.md） |
+| `greenI2-log-menu.img` | Advanced Logger 菜单镜像（回读通道） | 101,187,584 | `32c1a7c72ea61a5f0f4aae1cf744a1c060fb7d6b57930cfabd4462f89fe1d680` |
+| `artifacts/ci-42987806310/` | Diting OS 窗口 cdr 源（userdata 重写用） | 约 6.4 GiB | 见 AGENTS.md；恢复步骤见 `docs/RECOVERY.md` |
 
 ## 2. userdata 与系统窗口
 
-> 回退资产（`ipados18-source/`、`windows/Data.img`、`prepared-420734-os.img`）已从 D: `build-work` 移到 WSL `/home/nagatoquin/unixnu/rollback-assets/`；D: `build-work` 现约 26 GB，`userdata-osditing-1109.sparse.img` 仍在 D:。
+> 回退资产（`ipados18-source/`、`windows/Data.img`、`prepared-420734-os.img`）已从 D: `build-work` 移到 WSL `/home/nagatoquin/unixnu/rollback-assets/`；D: `build-work` 现约 23 GB（2026-11-16 清理旧变体/旧 CI 产物后），`userdata-osditing-1109.sparse.img` 仍在 D:；救砖步骤见 `docs/RECOVERY.md`。
 
 | 产物 | 用途 | 大小 | 说明 |
 | --- | --- | --- | --- |
