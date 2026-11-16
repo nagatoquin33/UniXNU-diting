@@ -1574,3 +1574,28 @@ work is the boot itself, not the inputs.
   预期后续 markers：`DitingWifi: PCIe0 ELBI=… link=… PHY=… LTSSM=…`、`training attempt=… target=Gen…`、
   `SMMU program status=…`、MHI/QMI 行、`ath11k start failed=0`。
 - 本轮只记录，未上机、未派 CI。
+
+## 2026-11-16 — addon31 三阶段 WiFi 变体 + 167 路径 primelist 修正
+
+- 构建：从 addon30 artifacts 出发，只改 `diting_wifi` args；kernel `0c1a2c1ff492f1e48a48ef66de692e7588b6a08c5f96de46757ed37958010147`、
+  bridge `2a4ef86def330e6cb9e2162a1100bf16faf8d73c85de5a531fb3cfe4ea093bcf`、Turnip
+  `6001cadb1b3b973d68f9a0ea3a30b1731e7d85026228f71b3b7317156ad982e9`、adsp `d299d413…` 均与 addon30 相同；args 52 tokens/999 chars。
+- primelist 修正：旧 `--prime-list` 是构建主机 10 行列表（728 B sha `b450847b…`），其中 6 条在真实 OS 卷不存在
+  （`UIKitCore`/`CoreMaterial`/`CorePDF`/`CoreChartSwift`/`MetalPerformanceShaders`/`MetalPerformanceShadersGraph` 的 `default.metallib`）；
+  新列表由 `scripts/gen-diting-prime-list.py`（commit `02cdb1c`）从 prepared OS 镜像枚举出 **167** 个真实 `.metallib` 路径
+  （13,172 B sha256 `0ca614ac7bd23f680b9fa77c944fccdd8cd6c6bec3a1974589da400ed2531604`，无重复；`--verify` 逐条 stat 通过）。
+  插件重建：`DitingAdrenoMetal` 116,960 B sha256 `f8cb839b6e85b1dea6d18b6cc9eaff4d96b05fbb86323cebd2fe3034aae3f39e`
+  （addon30 `f624a7d5…`；大小不变因为 section 长在既有 slack 内），`llvm-objdump -h` 显示 `__DATA,__primelist` section size
+  `0x3374` == 13,172 B，与列表一致，`-sectcreate` 在 build report 中。
+- `addon31.gpuaddon` 24,372,568 B sha256 `735fbc6d9c11e96a0e43f93aa646cc59607b54dd4d88c491d940ffd8e06cbe83`（7 文件，
+  plugin `f8cb839b…`、bridge `2a4ef86d…`、Info.plist `c7bd65d7…`、turnip `6001cadb…`、publish、clients、adsp `d299d413…`）。
+- 三个候选镜像（各 101,187,584 B；v4 layout/CRC、manifest==args、ADT==SHA-384、contract/storage PASS）：
+  `diting-addon31-rails.img` `73767046933f825d0a93d939e5ce42c65bcc6c9e6091d75be2969d7c2247fb1e`（`diting_wifi=2`）、
+  `diting-addon31-link.img` `cb291a2d353995dfec3efe34741737b54e6c51bcf493bfe7d00e83876693cdef`（`=4`）、
+  `diting-addon31-full.img` `67208eeb8ef67fbe295956ed3607011fe9aa778ca90c3da5e40c78474d490d81`（`=1`）。
+- 分段语义（`DitingWifiPlatform.cpp`，已存在、未改代码）：`diting_wifi` 默认 1=完整；2=rails voted 后停（`:221`）；
+  3=PCIe0 供电/时钟/复位后（`:265`）；4=link trained（`:368`）；6=SMMU isolation + DMA arena 后（`:598`）；
+  7=WLAN_EN/XO late asserted 后（`:225`）；8=PCIe0 GDSC on 后（`:237`）；9=clocks on 后（`:259`）。
+  详细 anchors 见 `build-work/evidence-20261116-wifi-stage/gating.md`；设备轮按 `WiFi worker armed stage=N` 与 `staged stop at N:` 判断停点。
+- 设备计划：rails（`=2`）先回答 smpe3 是否 physical ready → link（`=4`）看 PCIe0/training → full（`=1`）看 SMMU/MHI/QMI/ath11k/scan；
+  异常回 addon30（`a2158d7a…`，同 kernel）对照。本轮只记录，未上机、未派 CI。
