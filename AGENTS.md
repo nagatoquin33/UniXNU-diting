@@ -1730,3 +1730,26 @@ work is the boot itself, not the inputs.
 - 回滚：`git revert 5241607`（仅 dev）或直接用 addon31-full；main 不受影响。
 - 证据：`build-work/evidence-20261116-rpmh-criterion/README.md`、`rawvote.patch`、`kernel-verify.json`、`addon35-build.log`、
   `addon35-ab-compare.json`、`commit.log`。本轮只记录，未上机、未派 CI。
+
+## 2026-11-16 — addon34-official-adt：official ADT + merged core 的 8-CPU A/B 候选
+
+- 镜像：`diting-addon34-official-adt.img` 101,187,584 B sha256
+  `f7a9ec73df4e48a9e1bca565a85f55350d6995d006cd546246c4d312e073e61b`
+  （路径 `build-work/evidence-20261116-adt-gen/addon34-official-adt.img`，不在 build-work 根）。
+- 构建：addon31-full 的 args/artifacts（kernel `0c1a2c1ff492f1e48a48ef66de692e7588b6a08c5f96de46757ed37958010147`，
+  merged core dev `121ea7f`；addon `735fbc6d…`，plugin `f8cb839b…`/bridge `2a4ef86d…`/turnip `6001cadb…`；cpus=8；
+  args 52 tokens/999 chars）**只换 `--official-adt`**：ADT 17,572 B sha256
+  `28b187ed376753025e8a2cb7ca6626d324f580f2bcf011cda7366102a838c20d`（official generator + 动态字段；含 `/psci`、`/arm-io/ufshc`、cpu0..7），
+  manifest 1,375 B `a289a85cb07724806060081f4d82e3ea428ee4b2041d0b6faf0b0ecf6285f573`（与 addon31-full 相同），PONGFAT1 CRC `0xc367176c`；
+  gates PASS（v4 layout/CRC、manifest==args、ADT==SHA-384、contract/storage）。
+- 与 `addon31-full`（`67208eeb…`，old binary-patch ADT `e8ebc8f3…` 15,960 B，CRC `0x7a0fb9a0`）相比：args/manifest/kernel/addon/layout 全同，
+  **仅 ADT + payload FAT/CRC 不同**，是干净的 ADT 单变量对。
+- 构建注意：dev 的 DTS 为 official 路径禁用了 cpu1..7，因此用私有 device-input view（dts 副本去掉 7 行 disabled，其余 symlink 到 diting-ci；
+  `--device` 传入）构建；共享源码与 main 未改。
+- 三个镜像对三个问题的分工：`9bf5ea50…`（official ADT、cpus=1、旧 kernel）= 结构诊断；`addon34`（official ADT、cpus=8、merged kernel）=
+  出货候选测试；`addon31-full`（old ADT、cpus=8）= old-ADT 对照。
+- 设备 A/B：先 addon31-full 再 addon34，记录 AppleARMCPU/IOKit 匹配、桌面/触摸、`/cpus`（8 核 + `/psci`）、`/chosen/memory-map` 的 GpuAddon 区间、
+  ufshc 的 reg/reg-names/interrupts 是否被 NativeUfs 误用；失败则回退 old ADT 路径并把 ADT diff 反馈给 generator；通过后才进入
+  `merge-checklist.md` 的 core → diting-ci → 切默认顺序。
+- 证据：`build-work/evidence-20261116-adt-gen/`（README §14–15、`addon34-official-adt.img`、`ab-compare.json`、`merge-checklist.md`）。
+  本轮只记录，未上机、未派 CI。
