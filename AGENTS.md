@@ -1688,7 +1688,8 @@ work is the boot itself, not the inputs.
 - 通道能力：QR 载荷字段 `UUID/CALLER/SP/ELR/ESR/FAR/PHYS/IMAGE/TOTAL/DROPPED/REGS/REASON/TRUNCATED`；
   **reason 在 QR 中被截断**（`TRUNCATED=1`），只用于快速取寄存器与 panic 类别，完整 console 仍需 ramoops
   （userdata 尾部 4 MiB，TWRP `dd`）；USB CDC console 多次尝试未取得，不列为通道。
-- 一次真实 panic 记录（2026-11-16，用户屏拍离线解码）：UUID `218FDCCE-86F6-326F-9BC1-536380109D02`、
+- **外部样本（来自群聊屏拍，不是 Diting 设备）**，仅用于验证解码器与 RootLayout 解读，**不得**当作 Diting panic 或
+  我们 userdata/slot 的证据：UUID `218FDCCE-86F6-326F-9BC1-536380109D02`、
   CALLER `FFFFFE0009CDCE3C`、ELR `FFFFFE00075C3220`、ESR `0000000096000047`、FAR `FFFFFECF9BD00000`、
   IMAGE `FFFFFE0007004000`、TOTAL `0x4217`、REASON `UFS ROOT FAILURE: no userdata partition stage=GPT entries
   prepared=0 published=0 reads=0 failures=0 … HC cap=3587031f ver=00000400 hcs=0000010f hce=00000001 db=0 is=0 …`、
@@ -1699,7 +1700,8 @@ work is the boot itself, not the inputs.
   不是读 UFS 失败；下一步核对镜像 sha/slot 与 `manifest=`/`stage=` 诊断。
 - 离线验证：脚本语法/CLI 安装；用 `segno` 以同一字段集合成 `SHENG-PANIC-1` QR 解码，13 字段 +
   `reason_truncated: true` 全对（`evidence-20261116-panic-qr/synthetic-decode.json`），非 panic QR passthrough 正确；
-  原始屏拍照片不在本工作区（仅 lead/用户侧），证据目录保存解码记录 + 合成回归，拿到照片可同命令逐字段对照。
+  外部样本照片不在本工作区（仅 lead/用户侧），证据目录保存解码记录 + 合成回归，拿到照片可同命令逐字段对照。
+- 设备状态：Diting 目前仍不在 fastboot/adb 可见；恢复步骤见 `docs/RECOVERY.md`（先确认端口/按键与 slot，再按场景 B/E 操作）。
 - 文档：`docs/STATUS.md` 当前设备表新增「证据通道」行（ramoops / Advanced Logger 菜单 / panic QR / USB CDC 不可用）
   并加证据路径；`docs/RECOVERY.md` 新增场景 F（拍照 → 解码 → 断电重进 fastboot + RootLayout 解读 + ramoops 提示）。
   本轮未上机、未派 CI。
