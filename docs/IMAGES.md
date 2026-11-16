@@ -21,6 +21,7 @@
 | `diting-addon31-link.img` | 同上，`diting_wifi=4`（轨 + PCIe link trained） | 101,187,584 | `cb291a2d353995dfec3efe34741737b54e6c51bcf493bfe7d00e83876693cdef` |
 | `diting-addon31-full.img` | 同上，完整 WiFi 路径（stage 全开） | 101,187,584 | `67208eeb8ef67fbe295956ed3607011fe9aa778ca90c3da5e40c78474d490d81` |
 | `diting-addon32-touch.img` | addon31-full 的 THP-on args 变体：−`diting_exec_diag=1` +`diting_touch_thp=1`（52 tokens/999 B；kernel/addon/plugin/bridge/turnip 与 addon31-full 相同，THP 默认 0，见 touch-geni-perf patch `:515-526`） | 101,187,584 | `910a49654017e089acb7f3ca4ef640b86fb1fc35dfdd0e448b93cc4b95be4b13` |
+| `diting-addon33-primeoff.img` | addon31-full 的 prime-off A/B 变体：−`diting_exec_diag=1` +`diting_gpu_prime=0`（52 tokens/999 B；kernel/addon/plugin/bridge/turnip 与 addon31-full 相同，`PrimeShaders.h` 在 90 s 前直接返回） | 101,187,584 | `a67c894ebb18a4b1611b61f6b33182aab0251fd6ee411b0a53871d4fcdcdcea2` |
 | `image-candidate-release-v4-cpus1.img` | ADT 官方路径候选（`evidence-20261116-adt-gen`，**尚未合并为默认**）：ADT `4ac18849…` 15,352 B，CRC `0xda0f09a9`，contract/storage/single-core PASS | 101,187,584 | `9bf5ea504c1b445df662dad266e039fb5900ff7589f5abbe79e5eafecdcfca75` |
 | `image-candidate-oldadt-release-v4-cpus1.img` | 同候选的旧 binary-patch ADT 对照（args/manifest/kernel/addon/layout 逐项相同，仅 ADT 与 payload FAT/CRC 不同）：ADT `cdc7b8cc…` 14,112 B，CRC `0x2f129509` | 101,187,584 | `47e6b744b495a9671f636d6507d9ebe687bb8e58487238b808c175bad1bbb287` |
 | `diting-recovery-boot.img` | TWRP RAM Recovery（ramoops/APFS 回读） | 127,148,032 | `67cf2dc9d247815bc5be8c33f4c717b5833f13ca93a4d371ce796bfa0c3c2d6a` |

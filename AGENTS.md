@@ -1622,3 +1622,29 @@ work is the boot itself, not the inputs.
   IRQ vs poll 计数与跟手度；THP 只有持平或更好才保留，回退 addon31-full（`67208eeb…`）。
 - 证据：`build-work/evidence-20261116-touch-thp/README.md`、`verification-addon32-touch.json`、`build-image-retry.log`（首次 1018 B 被拒见 `build-image.log`）。
   本轮只记录，未上机、未派 CI。
+
+## 2026-11-16 — addon33-primeoff：prime ON/OFF A/B 变体（单变量）
+
+- 从 addon31-full artifacts 只改 args：−`diting_exec_diag=1` +`diting_gpu_prime=0`，52 tokens/**999 chars**
+  （addon31-full 999 − 19 + 19；`diting_gpu_prime=0` 实际 18 B + 分隔符）。kernel
+  `0c1a2c1ff492f1e48a48ef66de692e7588b6a08c5f96de46757ed37958010147`（26 IOGPU）、addon
+  `735fbc6d9c11e96a0e43f93aa646cc59607b54dd4d88c491d940ffd8e06cbe83`、plugin `f8cb839b…`（167 路径 primelist
+  `0ca614ac…`）、bridge `2a4ef86d…`、turnip `6001cadb…` 与 addon31-full 相同。
+- prime gating（`drivers/DitingMetal/PrimeShaders.h` `run()`）：设备创建后读 `kern.bootargs`，含
+  `diting_gpu_prime=0` 或 `sheng-gpu-prime=0` 时在 `sleep(90s)` 之前直接 `return`；arg 缺省（addon30/31）时后台 worker
+  在 GPU 设备出现 ~90 s 后启动并编译 primelist，写 `prime.log`/`prime-done`/`prime-bad` 与 `PR resumed/libs/made/…` 遥测。
+- 预算：addon31-full 999 chars；−`diting_exec_diag=1`（18+分隔符）→ 980，+`diting_gpu_prime=0`（18+分隔符）→ **999**，
+  正好在 packer 1000-byte 上限内（DarwinBoot 1024 buffer，>1000 拒绝），无需再删。删除经私有 device-input view
+  （除 board.toml 副本去掉该行外全部 symlink 到 diting-ci，`--device` 传入；共享 `board.toml` 未改，`make-device-view.py` 可重建）；
+  `--arg` 只能追加不能移除 board `kernel_args`（`UniXNU/scripts/unixnu/payload.py:125-129`）。
+- 镜像：`diting-addon33-primeoff.img` 101,187,584 B sha256
+  `a67c894ebb18a4b1611b61f6b33182aab0251fd6ee411b0a53871d4fcdcdcea2`；gates 全 PASS：v4 layout、kernel slot、PONGFAT1 CRC、
+  manifest==args、ADT==SHA-384、`check-loader-adt-contract.py` PASS、storage-binding PASS、7 文件 addon（adsp `d299d413…`）、
+  plugin/bridge/turnip 与 addon31 一致。`hardware_tested=false`。
+- 设备 A/B（单变量、背靠背）：`diting-addon31-full.img`（prime ON）vs `diting-addon33-primeoff.img`（OFF），各两个测量窗口——
+  桌面可用后**前 3 分钟**（覆盖 prime 在 ~90 s 启动的后台编译）与 **8 分钟后**；每窗滚 30 s（`log-gpu=1`/`diting_gpu_trace=1`/
+  `diting_gpu_pixels=1` 已开），记录 `T pipeline`、`PR resumed`/`libs=`/`made=`/`refused=`、`H frame-enc`/`frame-gpu`、
+  `G commit-to-complete`、`V cache wr=`/`q=`、`V drv`、`prime.log kept=`/`stat-failed=`、jetsam 与跟手度；保留 prime ON 除非可测量变差，
+  回退 addon31-full（`67208eeb…`）。
+- 证据：`build-work/evidence-20261116-gpu-prime-off/README.md`、`verification-addon33-primeoff.json`、`build-image.log`。
+  本轮只记录，未上机、未派 CI。
