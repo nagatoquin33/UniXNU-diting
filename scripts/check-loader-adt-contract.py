@@ -129,6 +129,26 @@ def payload_member(fat, member):
         return probe.stdout if probe.returncode == 0 else None
 
 
+def check_initrd_slot(fat, failures):
+    """unixnu.toml initrd and /chosen/memory-map/RAMDisk must agree.
+
+    DarwinBoot.c treats a boot-request ramdisk as requiring a matching ADT slot;
+    the reverse (slot without a ramdisk) is rejected as well.
+    """
+    toml = payload_member(fat, '/EFI/UniXNU/unixnu.toml')
+    adt = payload_member(fat, '/EFI/UniXNU/Payloads/kernel.macho.adt')
+    initrd = bool(toml and any(line.startswith('initrd =') for line in
+                               toml.decode('utf-8', 'replace').splitlines()))
+    slot = False
+    if adt:
+        memory_map = parse_adt(adt).get('/chosen/memory-map', {})
+        slot = 'RAMDisk' in memory_map or 'PackedRAMDisk' in memory_map
+    if initrd and not slot:
+        failures.append('unixnu.toml carries an initrd but the ADT lacks /chosen/memory-map/RAMDisk')
+    if slot and not initrd:
+        failures.append('ADT reserves a RAMDisk slot but unixnu.toml has no initrd')
+
+
 def check_gpu_addon(fat, failures):
     """DarwinBoot fails with EFI_COMPROMISED_DATA when the GpuAddon slot and the
     kernel.macho.gpuaddon file disagree (DarwinBoot.c AddonOffset checks)."""
@@ -193,6 +213,7 @@ def check_image(path):
     for token in OLD:
         if token in fat:
             failures.append(f"payload ADT still carries {token.decode()}")
+    check_initrd_slot(fat, failures)
     check_gpu_addon(fat, failures)
     return failures
 
