@@ -1648,3 +1648,15 @@ work is the boot itself, not the inputs.
   回退 addon31-full（`67208eeb…`）。
 - 证据：`build-work/evidence-20261116-gpu-prime-off/README.md`、`verification-addon33-primeoff.json`、`build-image.log`。
   本轮只记录，未上机、未派 CI。
+
+## 2026-11-16 — CI porting-record ref bump to 9931232
+
+- `.github/workflows/porting-record.yml` 的 UniXNU checkout ref 由 `c96b29975645b711dc06bc435c3ad27321ce817c` 提升到
+  **`9931232fd68b8ae1db0abd957ecba417f1996e52`**（我们已同步的 upstream main / PR #272 之后）；workflow 其余步骤不变。
+- 本地按 CI 步骤复现：clean temp checkout（`git worktree add --detach 9931232`）→
+  `python3 scripts/install-unixnu-inputs.py --unixnu <ref>` → `<ref>/scripts/porting-record.py check --device <diting-ci>`，
+  输出 **「diting: 34 structured areas checked」**（PASS）；随后 temp checkout 已移除、worktree prune。
+  安装步骤会打印 XnuPrelink kit 未 checkout 的 patch 跳过提示（CI 的 UniXNU checkout 同样不带 submodules，行为一致）。
+- 边界：**`package.yml` 的 core pin 未动**（单独决策）；本次只改 record workflow。推送会触发一次 record workflow，
+  其结果是 CI 侧状态，不是设备结论。
+- 证据：`build-work/evidence-20261116-ci-ref/README.md`、`simulate.log`。
