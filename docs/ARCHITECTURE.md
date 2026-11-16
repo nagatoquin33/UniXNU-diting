@@ -56,7 +56,7 @@
 ## 5. 上游同步
 
 - 参照检出：`/home/nagatoquin/unixnu/UniXNU-upstream`（detached，`origin/main`），只读；
-- 工作内核钉版：**`fd2f4d1` 仍是已验证 pin**（upstream `03129b6` + 本地保留提交 `00b8415`；kernel exit 0、IOGPU `7ed899e5…`、storage/porting PASS）；核心 fork 现在只保留 `main` `377f0ff` 与 `dev` `97e6c92`（= `fd2f4d1` + `feat/adt-arm-io` `8968f72`），pin 是 `dev` 的祖先；旧 `sync/*` 与 feature 分支已归档/删除。升级 pin 需在对应分支上重做内核构建与 storage/porting 校验；首次干净构建前需清理 diting-ci 的 4 个过期 refer 软链（见 [`core-provenance.json`](../core-provenance.json) 的 `prerequisite_refer_cleanup`）。
+- 工作内核钉版：**`121ea7f11afc3bbeb5d56336ab1550fba3ddf228`**（核心 fork `dev`，merge upstream `9931232fd68b8ae1db0abd957ecba417f1996e52`/PR #272；在 diting-ci `dev` `2d6d0c2` 上 kernel exit 0、kernel `0c1a2c1f…` 73,781,248 B、26 entries 含 IOGPU、construct bytes `fd7bbfa9…21320094`、storage/porting PASS）。**条件**：仅 build-verified；addon30 重建与设备启动、以及 diting-ci `main`（`f853d0d`）在该 core 上的复验仍待完成；上一 pin `fd2f4d1` 是 `dev` 的祖先，回滚只需改 pin。核心 fork 只保留 `main` `377f0ff` 与 `dev` `121ea7f`；首次干净构建前需清理 diting-ci 的 4 个过期 refer 软链（见 [`core-provenance.json`](../core-provenance.json) 的 `prerequisite_refer_cleanup`）。
 - 同步原则：先 fetch 阅读上游变更（文档、契约、组件），再决定是否 bump 钉版；不向上游推送。
 
 ## 6. 分支策略（2026-11-16 起）

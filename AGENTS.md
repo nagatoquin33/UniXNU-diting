@@ -1486,3 +1486,22 @@ work is the boot itself, not the inputs.
   与 `docs/ARCHITECTURE.md` §5/§6 的现状段一致；`docs/STATUS.md` 的 core 行与分支状态行同步。
 - 后续：`dev` 里的官方 ADT 路径（`fix/adt-gen` + 核心 `feat/adt-arm-io`）仍需设备 A/B 通过后才并入 `main`；
   pin 升级到 `dev` 之前需要在 `dev` 上重做内核构建与 storage/porting 校验。本轮只改文档/provenance，未上机、未派 CI。
+
+## 2026-11-16 — core pin 条件性 bump 到 dev 121ea7f
+
+- 核心 fork `dev` 合入 upstream `9931232fd68b8ae1db0abd957ecba417f1996e52`（`docs: refresh device records`，含 PR #272
+  `21d683d` runtime builds / graphics consumers）→ merge commit `121ea7f11afc3bbeb5d56336ab1550fba3ddf228`
+  （第一父 `97e6c92` = `fd2f4d1` + `feat/adt-arm-io`）。唯一冲突 `scripts/unixnu/kernel.py`（保留 fork 的
+  `XNU_MACHINE_CONFIG` 与 upstream 的 Kernel.framework header 就绪检查）；其余自动合并，`components.toml` 组件 pin
+  （ArmCpu `acba4ee`、Adreno740 `1c9029b`、AdrenoMetal `26d4902`、RamBlock `00a6e5d`）、`runtime.py`、新脚本均随上游更新。
+- 在 diting-ci `dev` `2d6d0c2` 上验证：`unixnu status` rc 0、`defconfig` rc 0、kernel build **rc 0**、
+  kernel 73,781,248 B sha256 `0c1a2c1ff492f1e48a48ef66de692e7588b6a08c5f96de46757ed37958010147`、
+  `__PRELINK_INFO` 26 entries 含 `com.apple.iokit.IOGPUFamily`、construct bytes `fd7bbfa9…21320094` 匹配、
+  storage bindings PASS、`porting-record.py check --device .` PASS（34 areas）、compileall rc 0（`evidence-20261116-upstream-9931232/kernel-verify.json`）。
+  相对上一版（`ddccc812…`）delta 属 PR #272 的 build-selection/runtime 内容，construct 与 storage 不变。
+- pin：`fd2f4d1` → **`121ea7f`**（`core-provenance.json`：core_commit/branch_tip、upstream_commit、merge_parent `97e6c92`、
+  previous_pin `fd2f4d1`、artifacts `0c1a2c1f…` 26 entries、verification、evidence path）。**条件**：仅 build-verified；
+  addon30 重建 + 设备启动未做；diting-ci `main`（`f853d0d`）未在该 core 上复验；出货候选 addon28/29 仍用 `7ed899e5…`
+  （`fd2f4d1` 谱系），因此默认镜像行为不变，直到 addon30。回滚只需把 pin 改回 `fd2f4d1`（仍是祖先）。
+- 证据：`build-work/evidence-20261116-upstream-9931232/README.md`、`kernel-verify.json`、`merge.log`、
+  `kernel-build-20261116T063237Z.log`、`status-defconfig.log`。本轮只改 provenance/文档，未上机、未派 CI。

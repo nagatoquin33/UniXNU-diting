@@ -1,24 +1,24 @@
 {
   "schema_version": 1,
-  "core_commit": "fd2f4d17833fb8439a801cd8bad85beef7b363f4",
+  "core_commit": "121ea7f11afc3bbeb5d56336ab1550fba3ddf228",
   "branch": "dev",
-  "upstream_commit": "03129b6d33395a0a57715b1673e7e5ce3b516e10",
-  "merge_parent": "00b841547946103eb5035a2bf974ddde03ba73a5",
-  "device_commit": "59c88c87ae8d7d210b1a15302ae546e400adb425",
-  "verified_at": "2026-11-16T10:50:28+08:00",
-  "previous_pin": "0ce9779",
+  "upstream_commit": "9931232fd68b8ae1db0abd957ecba417f1996e52",
+  "merge_parent": "97e6c929613c527f338b3c2e703daf5e436fc86a",
+  "device_commit": "2d6d0c2d2d4b347e7234cf6d64cb7f195a114c45",
+  "verified_at": "2026-11-16T14:32:37+08:00",
+  "previous_pin": "fd2f4d17833fb8439a801cd8bad85beef7b363f4",
   "artifacts": {
     "core_kernel": {
       "path": "UniXNU/out/diting/ipados-18.7.10-22H374/diting_ipados18/kernel/kernel.macho",
-      "bytes": 73719808,
-      "sha256": "67b5199e445a7825c29e43960aea2ed1e7cbd85c1ec40493c23bc4ec013dd914",
-      "prelink_entries": 22,
-      "has_iogpu": false
+      "bytes": 73781248,
+      "sha256": "0c1a2c1ff492f1e48a48ef66de692e7588b6a08c5f96de46757ed37958010147",
+      "prelink_entries": 26,
+      "has_iogpu": true
     },
     "iogpu_kernel": {
-      "path": "build-work/evidence-20261116-core-sync/kernel-merged-core-iogpu.macho",
-      "bytes": 73773056,
-      "sha256": "7ed899e5d0f3c812e26f0df52fa02f129a1f4542fef858806ab33fc9011a07f8",
+      "path": "build-work/evidence-20261116-upstream-9931232/kernel-verify.json",
+      "bytes": 73781248,
+      "sha256": "0c1a2c1ff492f1e48a48ef66de692e7588b6a08c5f96de46757ed37958010147",
       "prelink_entries": 26,
       "has_iogpu": true
     }
@@ -29,19 +29,8 @@
     "porting_record": "PASS 34 areas",
     "unixnu_status": "PASS",
     "defconfig": "PASS",
-    "markers": {
-      "Diting touch latency": 1,
-      "Diting touch THP latency": 1,
-      "cmd written tcs=": 1,
-      "timeout tcs=": 1,
-      "Diting pwrkey": 4,
-      "PSCI SYSTEM_OFF": 1,
-      "diting_pwrkey_long": 1,
-      "diting_pwrkey_log": 1,
-      "ramoops": 14,
-      "ramoops_ufs": 3,
-      "diting_ramoops_ufs": 2
-    }
+    "compileall": "exit 0",
+    "construct_bytes": "fd7bbfa9fd030091219efff021940291427600d042ec47f90311805221320094 (pc=0xfffffff00be106c8, matches)"
   },
   "prerequisite_refer_cleanup": [
     "AvailabilityVersions-143.7",
@@ -49,8 +38,8 @@
     "libdispatch-1521.140.2",
     "libplatform-349.140.6"
   ],
-  "evidence_path": "build-work/evidence-20261116-core-sync/README.md",
-  "branch_tip": "97e6c929613c527f338b3c2e703daf5e436fc86a",
+  "evidence_path": "build-work/evidence-20261116-upstream-9931232/README.md",
+  "branch_tip": "121ea7f11afc3bbeb5d56336ab1550fba3ddf228",
   "integration_branch": "dev",
-  "note": "fork keeps only main and dev; old sync/* and feature branches are retired; dev is the integration branch (fd2f4d1 + feat/adt-arm-io 8968f72); core_commit stays the verified build pin and is an ancestor of dev"
+  "note": "conditional pin: build-verified on diting-ci dev 2d6d0c2 only; addon30 rebuild and device boot pending; diting-ci main f853d0d not yet re-verified with this core; previous pin fd2f4d1 (ancestor of dev) remains the rollback target; fork keeps only main and dev, old sync/* retired"
 }
