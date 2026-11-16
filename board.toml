@@ -98,6 +98,52 @@ artwork-scale-factor = 3
 [adt.defaults.u32]
 sleep-disabled = 1
 
+[adt.arm-io.diting-touch.string]
+compatible = "diting,goodix-berlin-d"
+
+[adt.arm-io.diting-touch.u64]
+spi-base = 0x990000
+tlmm-base = 0xf000000
+gcc-base = 0x100000
+rsc-base = 0x17a20000
+cmd-db-base = 0x80860000
+
+[adt.arm-io.diting-touch.u32]
+gpio-offset = 0x100000
+max-x = 0x438
+max-y = 0x96c
+
+[adt.arm-io.diting-touch.bytes]
+pins = "100000001100000012000000130000001500000014000000"
+
+[adt.arm-io.diting-buttons.string]
+compatible = "diting,pm8350-keys"
+
+[adt.arm-io.diting-buttons.u64]
+core-base = 0xc400000
+cnfg-base = 0xc42d000
+observer-base = 0xc440000
+
+[adt.arm-io.diting-buttons.u32]
+ee = 0
+pon-ppid = 0x13
+volume-up-ppid = 0x18d
+
+[adt.arm-io.ufshc.u64]
+"diting,ufs-hc-base" = 0x1d84000
+"diting,ufs-hc-size" = 0x3000
+"diting,gcc-ufs-page" = 0x187000
+"diting,smmu-base" = 0x15000000
+"diting,smmu-size" = 0x100000
+"unixnu,userdata-first-lba" = 0x2f8a00
+"unixnu,userdata-last-lba" = 0x3adf3fa
+
+[adt.arm-io.ufshc.u32]
+"diting,smmu-stream-id" = 0xe0
+"diting,smmu-context-banks" = 0x4e
+"diting,smmu-match-groups" = 0x78
+"diting,ufs-spi" = 0x109
+
 [adt.chosen.u32]
 display-scale = 3
 display-rotation = 0
@@ -109,11 +155,8 @@ diting-allocatable-ram = "00408f800000000000c00000000000000000608500000000000010
 diting-audio-dma = "00000000000000000000000000000000"
 diting-dsi-backlight = "0040e90a0000000000040000ff0f000001000000010000000000000001000000"
 
-[adt.buttons.string]
-compatible = "buttons"
-
 [adt.buttons.strings]
-button-names = ["volup\u0000voldown\u0000hold\u0000"]
+button-names = ["volup", "voldown", "hold"]
 
 [adt.buttons.u32]
 home-button-type = 2
