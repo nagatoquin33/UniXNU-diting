@@ -13,7 +13,7 @@
 | core 钉版 | `121ea7f`（**条件性 bump**：核心 fork `dev` @ `121ea7f` = merge upstream `9931232`/PR #272；diting-ci `dev` `2d6d0c2` 上 kernel exit 0、kernel `0c1a2c1f…` 73,781,248 B、26 entries 含 IOGPU、construct `fd7bbfa9…21320094`、storage/porting PASS；**仅 build-verified**，addon30 重建/设备启动与 `main` `f853d0d` 复验待完成；上一 pin `fd2f4d1` 仍在历史中，见 `core-provenance.json`） |
 | OS | Diting 布局：`/sbin/launchd` = `/diting/init` sha256 `95cb7341…`；`libditing-ui18.dylib` 174,976 B，含 `/dev/diting-touch`；卷 UUID `B07DF049…` |
 | userdata | 整盘 sparse 恢复：`userdata-osditing-1109.sparse.img`（19,411,252,824 B，OS 窗口来自 `artifacts/ci-42987806310/diting-ipados18-system.cdr`，6,845,104,128 B sha256 `27c507c8972275c9170806bb975b03d762ebbb9379945b890d5665a154e8102d`） |
-| 待上机候选 | `D:\ai\diting\build-work\diting-addon24-diag.img`（`54ed270b…`）、`diting-addon26-diag.img`（`ee7278b2…`）、`diting-addon27-diag.img`（`d0b0e1e1…`）、`diting-addon28-diag.img`（`8cdd951d…`）、`diting-addon29-diag.img`（`4fadc124…`，addon28 的 GPU trace/pixel 变体），静态检查 PASS，`hardware_tested=false` |
+| 待上机候选 | `D:\ai\diting\build-work\diting-addon24-diag.img`（`54ed270b…`）、`diting-addon26-diag.img`（`ee7278b2…`）、`diting-addon27-diag.img`（`d0b0e1e1…`）、`diting-addon28-diag.img`（`8cdd951d…`）、`diting-addon29-diag.img`（`4fadc124…`）、`diting-addon30-diag.img`（`a2158d7a…`，合并 core `121ea7f`/PR #272 + Turnip BO lock fix），静态检查 PASS，`hardware_tested=false` |
 | ADT 官方路径候选 | `image-candidate-release-v4-cpus1.img`（`9bf5ea50…`；ADT `4ac18849…` 15,352 B，CRC `0xda0f09a9`）与旧 ADT 对照 `image-candidate-oldadt-release-v4-cpus1.img`（`47e6b744…`；ADT `cdc7b8cc…`，CRC `0x2f129509`）；两者 args/manifest/kernel `ddccc812…`/addon `8ea462a3…`/layout 一致，仅 ADT 与 payload FAT/CRC 不同；gates contract/storage/single-core PASS；**未合并为默认**，binary-patch 路径仍是默认 |
 | 分支状态 | diting-ci `main` @ `f853d0d` + `dev` @ `2d6d0c2`；核心 fork `main` @ `377f0ff` + `dev` @ `121ea7f`（= `fd2f4d1` + `feat/adt-arm-io` + upstream `9931232`）；旧 `sync/*` 与 feature 分支已归档/删除；`dev` 未合入 `main` |
 | 代码备份 | `/home/nagatoquin/unixnu/backups/diting-ci-before-rpmh-slot-20261115` |
@@ -52,7 +52,7 @@
 | --- | --- | --- |
 | Wi-Fi | 首笔 smpe2 RPMh 投票 `0x40508=7` 在 PCIe 训练前超时，未扫描 | 活动 TCS 为 TCS0–2；下一候选内核改用 TCS1（`cmd written tcs=` 已编入），待上机确认 committed → PCIe |
 | ADSP / 电量 | ADSP 到 stage 6，stage 7 `0x30030=7` 超时（-60） | 未到 PAS 加载与电池服务发布 |
-| UI 帧率 | 桌面可用但帧间隔不稳、卡顿 | Metal pipeline 编译未摊销（插件已内嵌 `__DATA,__primelist`）+ shader cache 不落盘；addon27 起 telemetry 增加 `V cache h/m/w/q/rf/wf/ev` 与 `V drv l/h/m/s/tr/mm/un`，并可开 `log-gpu=1` 的 `Diting Metal pass` 有界行；addon28 进一步用上游 Turnip 0016（shader-share）/0017（retired-BO sweep）重建，并新增 `diting_gpu_cache_dir` 与 `C cache dir=… shared=… writable=…` 行，预期降低冷编译与 fence 尾延迟（待上机对比 T/PR/H/ctc/V/C） |
+| UI 帧率 | 桌面可用但帧间隔不稳、卡顿 | Metal pipeline 编译未摊销（插件已内嵌 `__DATA,__primelist`）+ shader cache 不落盘；addon27 起 telemetry 增加 `V cache h/m/w/q/rf/wf/ev` 与 `V drv l/h/m/s/tr/mm/un`，并可开 `log-gpu=1` 的 `Diting Metal pass` 有界行；addon28 进一步用上游 Turnip 0016（shader-share）/0017（retired-BO sweep）重建，并新增 `diting_gpu_cache_dir` 与 `C cache dir=… shared=… writable=…` 行；addon30 在合并 core `121ea7f`（PR #272）上重建，Turnip `6001cadb…` 含 BO free under-lock fix（预期减少 address-0 提交与尾抖动），待上机与 addon29 对照 T/PR/H/ctc/V/C |
 | 关机 | 长按电源不能关机 | 内核无 poweroff 路径；下一候选内核含 PSCI SYSTEM_OFF 长按补丁（`Diting pwrkey … SYSTEM_OFF`） |
 
 **未达成、不得声称可用**：Wi-Fi 扫描/关联/DHCP、电量与充电状态、Metal 逐应用兼容性与稳定帧率、
@@ -62,16 +62,15 @@
 
 按顺序只记录第一个失败阶段，不跳步、不猜测。
 
-1. **addon29-diag**（`4fadc124…`，kernel `7ed899e5…`，52 args/999 B；内核/插件/bridge/turnip/addon 与 addon28 逐字节相同）：
-   在 addon28 基础上加 `diting_gpu_trace=1 diting_gpu_pixels=1`——前者打开 fork 的 per-frame GPU trace（提交/pass/fence 事件行），
-   后者打开 pixel capture（`frameEvent(40)`，用于把 `H frame-enc`/`ctc` 尾部对应到具体 pass/pixel 集）；保留 `log-gpu=1`、
-   `diting_pwrkey_log=1`/`diting_pwrkey_long=5000`，`applog_name` 收窄为 `backboardd,SpringBoard` 以放进 1000 B。
-   确认桌面/触摸保持；滚动 Settings/Home 30 s 冷态读 +20/+60 s 块：`T pipeline n/total/max`、`PR resumed`、`H frame-enc` 分箱、`ctc`、
-   `V cache h/m/w/q/rf/wf/ev`、`V drv l/h/m/s/tr/mm/un`、`C cache dir=… shared=… writable=…`，并用新增 trace 行归因 pass/draw/pixel 集；
-   再滚 30 s 热态对比 `T`/`frame-enc`/`ctc`/`E age`；重启后再冷滚一次，看 shader-cache `h` 是否上升、`T` 是否下降；
-   异常时回 addon28（无 trace，同内核/同 artifacts）或 addon27（旧 Turnip）对照。addon26 继续用于 pwrkey/PSCI SYSTEM_OFF 与 `PR functions resumed`。
-   > 跟进项：args 里 `diting_ui_software=0`、`diting_software_ui=0` 来自 `scripts/build-release-image-linux.py` 的 builder 默认值，
-   > 不在 board.toml；它们占用约 45 B 预算，后续应与 `[payload] kernel_args` 统一后再动。
+1. **addon30-diag**（`a2158d7a…`，kernel `0c1a2c1f…` 73,781,248 B/26 IOGPU prelink；core dev `121ea7f` = upstream `9931232`/PR #272）：
+   args 52/999 与 addon29 同集（`diting_gpu_trace=1 diting_gpu_pixels=1 log-gpu=1`、pwrkey 参数、`applog_name=backboardd,SpringBoard`）；
+   GPU 侧变化只有 Turnip `6001cadb…`（PR #272 `turnip-darwin-bo-finish-clears-under-lock.patch`：BO entry 在 `retire->lock` 内复制到 `gone` 并清零后再 reap）
+   与合并 core kernel；bridge `2a4ef86d…` 与 addon29 语义一致（symbol/nm 相同），plugin `f624a7d5…` 逐字节相同。
+   确认桌面/触摸保持；冷滚 Settings/Home 30 s → 热滚 30 s → 重启再冷滚 30 s，逐项对比 addon29：
+   `[gpu slow]`（fence/queue/gpu/retire）、`T pipeline n/total/max`、`PR functions resumed`、`H frame-enc`/`frame-gpu`、
+   `G commit-to-complete`、`ctc`、`V cache h/m/w/q/rf/wf/ev`、`V drv`、`C cache dir=… shared=… writable=…`，
+   以及 `log-gpu=1` 的 `Diting Metal pass` 行；重点看 address-0 提交/GPU 故障是否消失、提交与编码尾延迟是否下降、UI 行为是否与 addon29 一致。
+   异常回 addon29（`4fadc124…`，kernel `7ed899e5…`）对照；addon26 继续用于 pwrkey/PSCI SYSTEM_OFF。
 2. **ADT 官方路径 A/B（未合并前不设默认）**：RAM-only 先启 `image-candidate-release-v4-cpus1.img`（`9bf5ea50…`，ADT `4ac18849…`），
    再启 `image-candidate-oldadt-release-v4-cpus1.img`（`47e6b744…`，ADT `cdc7b8cc…`）作对照；两镜像除 ADT/payload CRC 外逐项相同。
    记录：无 AppleARMCPU panic/IOKit 匹配回归、桌面/触摸、`/cpus`（单 CPU、无 `/psci`、cpu0 `cluster-type`）、`/chosen/memory-map` 的 `GpuAddon` 区间、
