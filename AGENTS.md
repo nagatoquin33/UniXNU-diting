@@ -1375,3 +1375,39 @@ work is the boot itself, not the inputs.
   `prerequisite_refer_cleanup`、`previous_pin`、`evidence_path`），`docs/ARCHITECTURE.md §5` 与 `docs/STATUS.md` 同步。
 - 证据：`build-work/evidence-20261116-core-sync/README.md`、`merged-core-kernel.json`、`verify-merged-kernel.py`。
   本轮只更新文档与 provenance 记录，未上机、未派 CI；上游仓库仍只读、未推送。
+
+## 2026-11-16 — Turnip 重建（shared-shader / retired-BO）+ addon28
+
+- `patches/mesa/0016-diting-turnip-shaders-shared-across-pipeline-caches.patch`（2,002 B sha256
+  `54b2438548f90ee0f9a187725d4d58c31988f24b150f1020d1a9472284f0acee`，上游 `c34f018`：同 stage 跨
+  `VkPipelineCache` 复用 device shader）；`patches/mesa/0017-diting-turnip-sweep-retired-on-cache-miss.patch`
+  （3,835 B sha256 `acf17b799ee6954609d370a4a79a9758d82d331ecb1e10704ac658ed4d1c0872`，上游 `2bbb39d`：
+  retired BO 只在 cache miss 时 sweep，不再等他人 fence）。两补丁 LF-only，应用到 Mesa 快照副本
+  （`diting-mesa` @ `85fda3b…`）后 `patch -p1 -R --dry-run` 通过；共享 mesa 树未改。
+- Turnip rebuild：`scripts/build-diting-turnip.py --guest-build 22H374` 产出 `libvulkan_freedreno.dylib`
+  **17,882,280 B** sha256 `eab147a893c194c3778ececa3c6f3539963e92f55a917521c67ce55b97fea89b`（旧 17,883,400 B
+  `4b77d1ae…`）；`tu_pipeline.cc.o` 185,888→187,752 B、`tu_knl_darwin.cc.o` 41,704→42,728 B，新对象导入
+  `_pthread_mutex_trylock`。工具链注意：`--tools-directory` 必须用 target-clang 包装目录
+  `~/.local/xnu-linux/bin`（否则 meson 记录 host clang 并报 `unrecognisable emulation mode: llvm`）。
+- 缓存目录/金属流：fork 已有 `SharedShaderCache.h sharedShaderCacheDirectory()`（`NATIVE_METAL_SHARED_CACHE_DIR`、
+  同 UID/非 group+world 可写、mkstemp 探针）；`DitingMetalPlugin.mm` 新增 boot arg
+  `diting_gpu_cache_dir=<path>` 在候选列表构建前设置该 env、启动 NSLog 打印 chosen dir/shared/writable/metal-flow
+  与 bit-4 状态；`NativeBridgeMetalFrontend.mm` 把 chosen dir 交给 telemetry，新增
+  `C cache dir=… shared=… writable=…`（≤90 字符）。`metal-flow` 本 fork 未实现（iPadOS 默认 `7` = bits 0/1/2，
+  bit 4 early warming 未启用；warming 仍走 `PrimeShaders`/`diting_gpu_prime`）。
+- 产物：plugin `DitingAdrenoMetal` 116,960 B sha256 `f624a7d53b6425f84d173f80aaafbebd3438dce7d8666c8cd56245e91ab00d9d`
+  （`__DATA,__primelist` 728 B/10 行 == `diting-ui-metallibs.primelist`，bundle 内 turnip = `eab147a8…`）；
+  bridge 25,074,944 B sha256 `582cca9159dad0e709196ffb91e898b964ddbc8291b91c466676324c1dcb76cd`；
+  `addon28.gpuaddon` 24,371,768 B sha256 `5007f1fbeed5b5e0d23ef2a9ec3c2536e7040b94d19f40fb2677990486322005`
+  （7 文件，含 `firmware/adsp.mbn` `d299d413…`）。
+- 镜像：`D:\ai\diting\build-work\diting-addon28-diag.img` 101,187,584 B sha256
+  `8cdd951dfee38a196a754d8f4956e6b88e5656488c9433741c2cf253e6a8ebc5`；kernel = merged-core IOGPU
+  `7ed899e5…`（73,773,056 B，26 entries 含 IOGPU）；args 50 tokens/968 chars（`log-gpu=1`、
+  `diting_pwrkey_log=1`/`diting_pwrkey_long=5000`、`diting_gpu_cache_dir` 支持），contract/storage PASS、
+  v4 布局/CRC/ADT==SHA-384(manifest) 均通过；`hardware_tested=false`。
+- 预期（code-level，待真机确认）：shader-share 减少冷编译停顿（`T pipeline total/max` 与 `H frame-enc` 16–63 ms 分箱下降）；
+  retired-BO sweep 降低 encode/submit 抖动（`frame-enc`/`ctc` 尾部与 `E age` 离群值下降）；`C cache dir` + `V cache`/`V drv`
+  可判定写入是否落盘、跨启动是否持久。真机测试（RAM-only）：冷滚 30 s → 热滚 30 s → 重启再冷滚 30 s，逐项对比
+  `T pipeline`、`PR resumed`、`H frame-enc`、`ctc`、`V cache`、`V drv`、`C cache dir`；异常回 addon27（旧 Turnip）同内核对照。
+- 证据：`build-work/evidence-20261116-turnip/README.md`、`addon28-report.json`、`verification.json`、`logs/turnip-build.log`。
+  本轮只提交补丁/驱动与文档，未上机、未派 CI；上游仓库只读。

@@ -122,6 +122,7 @@ static bool backend(unsigned port,uint64_t *registryID)
     }
     return registry(port,registryID)==KERN_SUCCESS && *registryID;
 }
+extern "C" void native_bridge_metal_note_cache_dir(const char *, int, int);
 static id openDevice(unsigned port)
 {
     uint64_t registryID=0;if(!backend(port,&registryID))return nil;
@@ -133,6 +134,16 @@ static id openDevice(unsigned port)
         stringByAppendingPathComponent:@"libvulkan_freedreno.dylib"];
     if(access(loader.fileSystemRepresentation,R_OK)){report("Turnip library absent",-1);return nil;}
     NSString *process=[NSProcessInfo processInfo].processName;
+    /* Official cache policy: NATIVE_METAL_SHARED_CACHE_DIR selects the shared root and an
+     * empty value disables sharing. diting_gpu_cache_dir=<path> on the boot line sets it,
+     * so the addon can point every client at a Data-backed root without a rebuild. */
+    {char args[1024]={};size_t size=sizeof args;
+     if(!sysctlbyname("kern.bootargs",args,&size,nullptr,0)) {
+      const char key[]="diting_gpu_cache_dir=";const char *option=strstr(args,key);
+      if(option){option+=sizeof(key)-1;size_t n=strcspn(option," \t");char value[512]={};
+       if(n<sizeof value){memcpy(value,option,n);setenv("NATIVE_METAL_SHARED_CACHE_DIR",value,1);
+        NSLog(@"Diting Metal cache: NATIVE_METAL_SHARED_CACHE_DIR=%s",value);}}
+     }}
     NSMutableArray<NSString *> *candidates=[NSMutableArray new];
     // Share immutable versioned entries for the same Unix user; container
     // caches remain available when the native sandbox denies the shared path.
@@ -160,6 +171,11 @@ static id openDevice(unsigned port)
        * log lines (NSLog pass notes, pipeline journal); off without it. */
       if(strstr(args,"log-gpu=1") || strstr(args,"diting_gpu_log=1"))setenv("SHENG_LOG_GPU","1",1);
       else unsetenv("SHENG_LOG_GPU");
+      /* Official metal-flow=<bits> selects pipeline warming (iPadOS default 7; bit 4 = early
+       * warming). This fork warms through PrimeShaders, so only log what the line asks. */
+      {const char *p=strstr(args,"metal-flow=");
+       if(p){unsigned bits=0;sscanf(p,"metal-flow=%u",&bits);
+        NSLog(@"Diting Metal: metal-flow=%u bit4(early warming)=%s",bits,(bits&16)?"on":"off");}}
      }}
     setenv("TU_DEBUG","sysmem,nocb",1);
     // Diting implements NativeAdreno directly, not Sheng's AGX selector tunnel.
@@ -189,6 +205,11 @@ static id openDevice(unsigned port)
             NSLog(@"Diting Metal: device initialization failed: %@",exception);return nil;
         }
         if(result) {
+            const bool sharedChosen=!shared.empty() && [cache isEqualToString:@(shared.c_str())];
+            const bool writable=access(cache.fileSystemRepresentation,W_OK)==0;
+            NSLog(@"Diting Metal cache: dir=%@ shared=%d writable=%d env=%s",cache,sharedChosen?1:0,writable?1:0,
+                getenv("NATIVE_METAL_SHARED_CACHE_DIR")?getenv("NATIVE_METAL_SHARED_CACHE_DIR"):"(unset)");
+            native_bridge_metal_note_cache_dir(cache.fileSystemRepresentation,sharedChosen?1:0,writable?1:0);
             if(!strcmp(getprogname(),"backboardd")) {
                 // Only a published native device, on a detached background
                 // thread after UI startup; defer while real rendering is active.

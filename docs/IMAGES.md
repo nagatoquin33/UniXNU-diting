@@ -14,6 +14,7 @@
 | `diting-addon24-diag.img` | primelist 插件 + `e991983d` 内核 | 101,187,584 | `54ed270b31aa223e46b5603c0a25481de58bf93424e8d01a0b698a6968fcf9f4` |
 | `diting-addon26-diag.img` | pwrkey/PSCI + TCS1 + latency + primelist | 101,187,584 | `ee7278b260ffa0f3c2cb8fcb28ee0263f26d30edd31123eaccc18937dfe15edc` |
 | `diting-addon27-diag.img` | GPU 上游诊断移植 + 完整 shader-cache 计数 + primelist 插件（内核沿用 addon26 `20834d3c…`） | 101,187,584 | `d0b0e1e13e9a5e4c155d8aeb0a6c6626a06038c244d5cd008163681f26ead710` |
+| `diting-addon28-diag.img` | Turnip 0016/0017 重建 + `diting_gpu_cache_dir`/`C cache dir` 遥测（kernel `7ed899e5…`） | 101,187,584 | `8cdd951dfee38a196a754d8f4956e6b88e5656488c9433741c2cf253e6a8ebc5` |
 | `diting-recovery-boot.img` | TWRP RAM Recovery（ramoops/APFS 回读） | 127,148,032 | `67cf2dc9d247815bc5be8c33f4c717b5833f13ca93a4d371ce796bfa0c3c2d6a` |
 | `b1-darwinboot24/diting-unixnu-uefi-darwinboot24.img` | B1 DarwinBoot24 bring-up 基线 | 101,187,584 | `285e6afa1f4291f10839619fbc06d09ce08842ac14d7143be20756d4c8f106fa` |
 | `greenI2-log-menu.img` | Advanced Logger 菜单镜像（回读通道） | — | 见 AGENTS.md 回退资产清单 |

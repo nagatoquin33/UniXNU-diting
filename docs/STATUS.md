@@ -13,7 +13,7 @@
 | core 钉版 | `fd2f4d1`（`sync/upstream-20261116`；upstream `03129b6` + 本地 `00b8415`，device `59c88c8` 验证：kernel exit 0、storage/porting PASS；见根目录 `core-provenance.json`） |
 | OS | Diting 布局：`/sbin/launchd` = `/diting/init` sha256 `95cb7341…`；`libditing-ui18.dylib` 174,976 B，含 `/dev/diting-touch`；卷 UUID `B07DF049…` |
 | userdata | 整盘 sparse 恢复：`userdata-osditing-1109.sparse.img`（19,411,252,824 B，OS 窗口来自 `artifacts/ci-42987806310/diting-ipados18-system.cdr`，6,845,104,128 B sha256 `27c507c8972275c9170806bb975b03d762ebbb9379945b890d5665a154e8102d`） |
-| 待上机候选 | `D:\ai\diting\build-work\diting-addon24-diag.img`（`54ed270b…`）、`diting-addon26-diag.img`（`ee7278b2…`）、`diting-addon27-diag.img`（`d0b0e1e1…`，GPU 上游诊断 + 完整 shader-cache 计数），静态检查 PASS，`hardware_tested=false` |
+| 待上机候选 | `D:\ai\diting\build-work\diting-addon24-diag.img`（`54ed270b…`）、`diting-addon26-diag.img`（`ee7278b2…`）、`diting-addon27-diag.img`（`d0b0e1e1…`）、`diting-addon28-diag.img`（`8cdd951d…`，Turnip 0016/0017 + cache-dir 遥测），静态检查 PASS，`hardware_tested=false` |
 | 代码备份 | `/home/nagatoquin/unixnu/backups/diting-ci-before-rpmh-slot-20261115` |
 
 ## 已实机证实
@@ -39,6 +39,7 @@
 - 候选镜像：`build-work/evidence-20261116-addon26/README.md`（addon26）、`evidence-20261115-gpu-prime/verify-addon24.py`
   （addon24）；pwrkey/PSCI：`build-work/evidence-20261116-pwrkey/README.md`
 - GPU 上游诊断移植：`build-work/evidence-20261116-gpu-upstream/README.md`、`addon27-report.json`、`verification.json`
+- Turnip 重建 / addon28：`build-work/evidence-20261116-turnip/README.md`、`addon28-report.json`、`verification.json`
 - 仓库记录：`AGENTS.md` 的 2026-11-15/16 各条
 
 ## 当前阻塞（真机日志定位，非推断）
@@ -47,7 +48,7 @@
 | --- | --- | --- |
 | Wi-Fi | 首笔 smpe2 RPMh 投票 `0x40508=7` 在 PCIe 训练前超时，未扫描 | 活动 TCS 为 TCS0–2；下一候选内核改用 TCS1（`cmd written tcs=` 已编入），待上机确认 committed → PCIe |
 | ADSP / 电量 | ADSP 到 stage 6，stage 7 `0x30030=7` 超时（-60） | 未到 PAS 加载与电池服务发布 |
-| UI 帧率 | 桌面可用但帧间隔不稳、卡顿 | Metal pipeline 编译未摊销（插件已内嵌 `__DATA,__primelist`）+ shader cache 不落盘；addon27 起 telemetry 增加 `V cache h/m/w/q/rf/wf/ev` 与 `V drv l/h/m/s/tr/mm/un`，并可开 `log-gpu=1` 的 `Diting Metal pass` 有界行，用于区分 queued-but-unwritten / write-failure / 驱动记录层是否持久 |
+| UI 帧率 | 桌面可用但帧间隔不稳、卡顿 | Metal pipeline 编译未摊销（插件已内嵌 `__DATA,__primelist`）+ shader cache 不落盘；addon27 起 telemetry 增加 `V cache h/m/w/q/rf/wf/ev` 与 `V drv l/h/m/s/tr/mm/un`，并可开 `log-gpu=1` 的 `Diting Metal pass` 有界行；addon28 进一步用上游 Turnip 0016（shader-share）/0017（retired-BO sweep）重建，并新增 `diting_gpu_cache_dir` 与 `C cache dir=… shared=… writable=…` 行，预期降低冷编译与 fence 尾延迟（待上机对比 T/PR/H/ctc/V/C） |
 | 关机 | 长按电源不能关机 | 内核无 poweroff 路径；下一候选内核含 PSCI SYSTEM_OFF 长按补丁（`Diting pwrkey … SYSTEM_OFF`） |
 
 **未达成、不得声称可用**：Wi-Fi 扫描/关联/DHCP、电量与充电状态、Metal 逐应用兼容性与稳定帧率、
@@ -57,10 +58,11 @@
 
 按顺序只记录第一个失败阶段，不跳步、不猜测。
 
-1. **addon27-diag**（`d0b0e1e1…`，内核沿用 `20834d3c…`）：确认桌面/触摸保持；读 +20/+60 s 的
-   `V cache h/m/w/q/rf/wf/ev` 与 `V drv l/h/m/s/tr/mm/un`，判断 `q>0,w==0`（queued-but-unwritten）或 `wf>0`
-   （写失败/权限/编码）；用 `log-gpu=1` 的 `Diting Metal pass` 行把 `frame-enc` 超时归因到具体 pass/draw/pixel 集；
-   再在 addon26 上确认 pwrkey/PSCI SYSTEM_OFF 关机与 `PR functions resumed`。
+1. **addon28-diag**（`8cdd951d…`，kernel `7ed899e5…`，50 args/968 B 含 `log-gpu=1`）：确认桌面/触摸保持；
+   滚动 Settings/Home 30 s 冷态读 +20/+60 s 块：`T pipeline n/total/max`、`PR resumed`、`H frame-enc` 分箱、`ctc`、`V cache h/m/w/q/rf/wf/ev`、
+   `V drv l/h/m/s/tr/mm/un`、`C cache dir=… shared=… writable=…`（`log-gpu=1` 的 `Diting Metal pass` 行用于归因 pass/draw/pixel 集）；
+   再滚 30 s 热态对比 `T`/`frame-enc`/`ctc`/`E age`；重启后再冷滚一次，看 shader-cache `h` 是否上升、`T` 是否下降；
+   异常时回 addon27（旧 Turnip）同内核对照。addon26 继续用于 pwrkey/PSCI SYSTEM_OFF 与 `PR functions resumed`。
 2. **Wi-Fi**：RPMh committed → 物理电源 → PCIe → SMMU/MSI → MHI/QMI → station/MAC → 系统设置扫描 →
    关联 → DHCP。仍超时时比较 TCS1 的触发控制、命令状态、idle 与 IRQ_STATUS。
 3. **电量 / ADSP**：越过 stage 7 → PAS → DSP ready → GLINK → `PMIC_RTR_ADSP_APPS` →

@@ -99,6 +99,9 @@ static Timed gTimePipeline,gTimeLibrary,gTimeFunction,gTimeEncodeToCommit;
 // pass notes. Off by default so the bounded slow-frame log stays the only wave.
 static bool logGpuOn() {static const bool on=getenv("SHENG_LOG_GPU")!=nullptr;return on;}
 static std::atomic<uint64_t> gHistFrameGpu[10],gHistOtherGpu[10],gHistFrameEncode[10];
+/* The plugin's chosen shader-cache directory: which root the runtime writes (the official
+ * policy checks writability, a sandbox may pick a private cache). */
+static char gCacheDir[400];static int gCacheShared=-1,gCacheWritable=-1;
 static void histAdd(std::atomic<uint64_t> *bins,uint64_t us) {unsigned b=0;const uint64_t ms=us/1000;while(b<9 && ms>=(1ull<<b))++b;bins[b]++;}
 extern "C" { __attribute__((weak)) volatile uint32_t native_prime_functions_resumed; }
 static Timed gTimeWaitScheduled,gTimeWaitCompleted;
@@ -2509,6 +2512,9 @@ static size_t native_bridge_metal_formats_locked(char *out,size_t size) {
  return n>0?(size_t)n:0;
 }
 // The telemetry table the plugin streams to the kernel's log: newline-separated rows of at most 90 characters.
+extern "C" void native_bridge_metal_note_cache_dir(const char *dir,int shared,int writable) {
+ if(!dir)return;strlcpy(gCacheDir,dir,sizeof gCacheDir);gCacheShared=shared;gCacheWritable=writable;
+}
 extern "C" size_t native_bridge_metal_telemetry(char *out,size_t size) {
  size_t at=0;out[0]=0;
  auto row=[&](const char *format,auto... args){
@@ -2572,6 +2578,7 @@ extern "C" size_t native_bridge_metal_telemetry(char *out,size_t size) {
   }
   char warning[200];size_t n=nmb_last_warning(warning,sizeof warning);
   if(n){row("W %.86s",warning);if(n>86)row("Wb %.86s",warning+86);}
+  if(gCacheDir[0])row("C cache dir=%.60s shared=%d writable=%d",gCacheDir,gCacheShared,gCacheWritable);
  }
  {
   std::lock_guard<std::mutex> lock(gProblemLock);
