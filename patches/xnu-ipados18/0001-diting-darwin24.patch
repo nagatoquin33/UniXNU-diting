@@ -371,7 +371,7 @@ new file mode 100644
 index 0000000..00feebd
 --- /dev/null
 +++ b/bsd/dev/diting_goodix.c
-@@ -0,0 +1,935 @@
+@@ -0,0 +1,877 @@
 +/* Goodix Berlin-D / Diting SM8475. Adapted from the earlier redwood_goodix.c
 + * (APSL 2.0). Hardware resources are the Diting live DT, checked against the
 + * NothingOSS cape pinctrl and waipio GCC source. No Redwood peripherals. */
@@ -392,6 +392,10 @@ index 0000000..00feebd
 +extern vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
 +extern vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
 +extern kern_return_t thread_terminate(thread_t thread);
++
++/* Shared RPMh voter from DitingPlatformResources.cpp (CONFIG_XNU_DITING_POWER).
++ * Weak so a touch-only defconfig without the power driver still links. */
++extern bool diting_rpmh_vote(uint32_t, uint32_t) __attribute__((weak_import));
 +
 +static vm_offset_t tlmm, gcc, se, rsc, cmd_db;
 +static uint64_t tlmm_phys, gcc_phys, se_phys, rsc_phys, cmd_db_phys;
@@ -500,22 +504,6 @@ index 0000000..00feebd
 +#define CMD_DB_SIZE             0x20000UL
 +#define RSC_PHYS                rsc_phys    /* the application processor's "DRV 2" */
 +#define RSC_SIZE                0x10000UL
-+#define TCS(reg)                (rsc + 0xd00 + 4 * 0x2a0 + (reg))  /* APSS DRV2 active TCS4, the set
-+                                                                     * DitingPlatformResources validates */
-+#define TCS_IRQ_ENABLE          0x00
-+#define TCS_IRQ_STATUS          0x04
-+#define TCS_IRQ_CLEAR           0x08
-+#define TCS_WAIT_FOR_COMPLETION 0x10
-+#define TCS_CONTROL             0x14
-+#define TCS_CONTROL_ENABLE      (1u << 16)
-+#define TCS_CONTROL_TRIGGER     (1u << 24)
-+#define TCS_STATUS              0x18            /* 0 while busy */
-+#define TCS_CMD_ENABLE          0x1c
-+#define TCS_CMD_MSGID(n)        (0x30 + 20 * (n))
-+#define TCS_CMD_ADDR(n)         (0x34 + 20 * (n))
-+#define TCS_CMD_DATA(n)         (0x38 + 20 * (n))
-+#define MSGID_WRITE_4_BYTES     0x10008
-+#define MSGID_RESPONSE          0x100
 +
 +#define VRM_VOLTAGE             0               /* a regulator's registers, from its address: millivolts */
 +#define VRM_ENABLE              4
@@ -569,58 +557,6 @@ index 0000000..00feebd
 +	return 0;
 +}
 +
-+static bool
-+rpmh_wait(uint32_t reg, uint32_t mask, uint32_t value, const char *what)
-+{
-+	for (int i = 0; i < 2000; i++) {
-+		if ((rd(TCS(reg)) & mask) == value) {
-+			return true;
-+		}
-+		sleep_us(100);
-+	}
-+	printf("goodix: RPMh: timeout waiting for %s (register %#x = %#x)\n", what, reg, rd(TCS(reg)));
-+	return false;
-+}
-+
-+/* Send up to three register writes to RPMh and wait until they are done. */
-+static bool
-+rpmh_write(const uint32_t *address, const uint32_t *data, unsigned count)
-+{
-+	uint32_t irq_enable = rd(TCS(TCS_IRQ_ENABLE));
-+	bool done;
-+
-+	/* the slot set must be idle, and switched off the way the hardware wants it: trigger, then enable */
-+	for (int i = 0; rd(TCS(TCS_STATUS)) == 0; i++) {
-+		if (i > 2000) {
-+			printf("goodix: RPMh: the command slots stay busy\n");
-+			return false;
-+		}
-+		sleep_us(100);
-+	}
-+	wr(TCS(TCS_CONTROL), rd(TCS(TCS_CONTROL)) & ~TCS_CONTROL_TRIGGER);
-+	wr(TCS(TCS_CONTROL), rd(TCS(TCS_CONTROL)) & ~TCS_CONTROL_ENABLE);
-+	wr(TCS(TCS_IRQ_CLEAR), 1);
-+	for (unsigned i = 0; i < count; i++) {
-+		wr(TCS(TCS_CMD_MSGID(i)), MSGID_WRITE_4_BYTES | MSGID_RESPONSE);
-+		wr(TCS(TCS_CMD_ADDR(i)), address[i]);
-+		wr(TCS(TCS_CMD_DATA(i)), data[i]);
-+	}
-+	wr(TCS(TCS_WAIT_FOR_COMPLETION), (1u << count) - 1);
-+	wr(TCS(TCS_CMD_ENABLE), (1u << count) - 1);
-+	wr(TCS(TCS_IRQ_ENABLE), irq_enable | 1);        /* the status bit follows the enable; the interrupt itself stays masked */
-+	wr(TCS(TCS_CONTROL), TCS_CONTROL_ENABLE);
-+	wr(TCS(TCS_CONTROL), TCS_CONTROL_ENABLE | TCS_CONTROL_TRIGGER);
-+
-+	done = rpmh_wait(TCS_IRQ_STATUS, 1, 1, "the request");
-+	wr(TCS(TCS_CONTROL), rd(TCS(TCS_CONTROL)) & ~TCS_CONTROL_TRIGGER);
-+	wr(TCS(TCS_CONTROL), rd(TCS(TCS_CONTROL)) & ~TCS_CONTROL_ENABLE);
-+	wr(TCS(TCS_CMD_ENABLE), 0);
-+	wr(TCS(TCS_WAIT_FOR_COMPLETION), 0);
-+	wr(TCS(TCS_IRQ_CLEAR), 1);
-+	wr(TCS(TCS_IRQ_ENABLE), irq_enable);
-+	return done;
-+}
-+
 +/* Diting live DT (soc/spi@990000/xiaomi_touch@0):
 + *   vdd-supply      = <&rpmh-regulator-ldoc2>        -> pm8350c_l2, 1.8 V (IOVDD)
 + *   goodix,avdd-gpio = <&tlmm 0x47 0>                -> TLMM GPIO 71 (AVDD switch)
@@ -629,19 +565,25 @@ index 0000000..00feebd
 +static bool
 +io_supply_on(void)
 +{
-+    uint32_t iovdd=rpmh_address("ldoc2"), address, data;
++    uint32_t iovdd=rpmh_address("ldoc2");
 +
 +    if (!iovdd || ((iovdd>>16)&15)!=4) {
 +        printf("goodix: IOVDD ldoc2 is not a PMIC-C resource in the command database (%#x)\n",iovdd);
 +        return false;
 +    }
-+    address=iovdd; data=1800;
-+    if (!rpmh_write(&address,&data,1)) return false;
++    if (!diting_rpmh_vote || !diting_rpmh_vote(iovdd, 1800)) {
++        printf("goodix: shared RPMh voter unavailable or IOVDD voltage vote failed (ldoc2=%#x)\n", iovdd);
++        return false;
++    }
 +    sleep_ms(3);
-+    address=iovdd+4; data=1;                     /* VRM_ENABLE */
-+    if (!rpmh_write(&address,&data,1)) return false;
-+    address=iovdd+8; data=4;                     /* init-mode the DT carries for pm8350c_l2 */
-+    if (!rpmh_write(&address,&data,1)) return false;
++    if (!diting_rpmh_vote || !diting_rpmh_vote(iovdd + 4, 1)) {   /* VRM_ENABLE */
++        printf("goodix: shared RPMh voter unavailable or IOVDD enable vote failed (ldoc2=%#x)\n", iovdd);
++        return false;
++    }
++    if (!diting_rpmh_vote || !diting_rpmh_vote(iovdd + 8, 4)) {   /* init-mode the DT carries for pm8350c_l2 */
++        printf("goodix: shared RPMh voter unavailable or IOVDD mode vote failed (ldoc2=%#x)\n", iovdd);
++        return false;
++    }
 +    sleep_ms(3);
 +    gpio_output(PIN_AVDD,true,PULL_NONE,6);      /* AVDD switch: active high */
 +    sleep_ms(10);
@@ -10783,7 +10725,7 @@ index e050e53..27157d6 100644
 +    diting_ram_bytes = total;
 +}
 +
-++static void
++static void
 +diting_ram_init(boot_args *args)
 +{
 +    DTEntry chosen;

@@ -267,12 +267,18 @@ def main():
                         help='UniXNU checkout (default: board.toml [package].unixnu)')
     parser.add_argument('--kernel', type=Path,
                         help='release kernel.macho (default: <core>/out/diting/<os>/<config>/kernel/kernel.macho)')
-    parser.add_argument('--prelink-kernel', action='store_true',
+    parser.add_argument('--prelink-kernel', dest='prelink_kernel', action='store_true',
+                        default=True,
                         help='re-prelink the existing release XNU aggregate with the board kext '
-                             'closure: when Adreno is enabled, add com.apple.iokit.IOGPUFamily to '
-                             'the roots and prelink IOGPUFamily + its closure library-only '
+                             'closure (DEFAULT since the zizhan sync): when Adreno or Metal is '
+                             'enabled, add com.apple.iokit.IOGPUFamily to the roots and prelink '
+                             'IOGPUFamily + its closure library-only '
                              '(scripts/build-ipados18-prelinked-boot.py:36-45). Reuses the built '
                              'aggregate; XNU is not relinked from scratch')
+    parser.add_argument('--no-prelink-kernel', dest='prelink_kernel', action='store_false',
+                        help='explicit escape: ship the release kernel.macho without re-prelinking '
+                             'the native aggregate (diagnostics only; the IOGPU binding then has '
+                             'no backing code and diting_metal=1 panics)')
     parser.add_argument('--native-kernel', type=Path,
                         help='native XNU aggregate for --prelink-kernel (default: <work>/tree/build/'
                              'xnu/ios-obj/DEVELOPMENT_ARM64_<machine>/mach.development.diting)')
@@ -422,10 +428,13 @@ def main():
             work / 'tree' / 'build/xnu/ios-obj' / f'DEVELOPMENT_ARM64_{machine}'
             / 'mach.development.diting')
         if not native.is_file():
-            fallback = work / 'kernel' / 'mach.development.diting'
-            native = fallback if fallback.is_file() else native
-        if not native.is_file():
-            parser.error(f'--native-kernel: {native} is not a file')
+            # work/kernel/mach.development.diting may already be prelinked by
+            # kits/XnuPrelink; re-prelinking it would stack the IOGPU closure on
+            # an already-prelinked image. Only the un-prelinked aggregate is a
+            # valid input; point at --native-kernel when the tree is elsewhere.
+            parser.error(f'--native-kernel: un-prelinked aggregate not found at {native}; '
+                         'the staged work/kernel copy may already be prelinked and is not a '
+                         'valid input — pass --native-kernel for the freshly built aggregate')
         kernelcache = (args.kernelcache or os.environ.get('DITING_KERNELCACHE')
                        or os.environ.get('UNIXNU_KERNELCACHE'))
         if not kernelcache:
@@ -433,7 +442,7 @@ def main():
         kernelcache = Path(kernelcache).expanduser().resolve()
         if not kernelcache.is_file():
             parser.error(f'--kernelcache: {kernelcache} is not a file')
-        iogpu = any('diting_adreno_start=1' in overrides
+        iogpu = any(('diting_adreno_start=1' in overrides or 'diting_metal=1' in overrides)
                     for overrides in overrides_by_cpus.values())
         kernel, prelink = prelink_release_kernel(
             native.resolve(), kernelcache, board['kernel']['prelink']['roots'],

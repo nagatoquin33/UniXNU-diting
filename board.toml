@@ -215,14 +215,15 @@ volume = "UNIXNU"
 # inside the payload image the package step repacks, so the volume stays well
 # below that bound.
 size_mib = 96
-# The current runtime arguments this board brings up with: the ones scripts/build-ipados18-prelinked-boot.py
-# used to write, minus its boot-epoch (the ADT carries a software clock instead) and with the
-# applog list trimmed to the services the trace reads. DarwinBoot copies the line into a
-# 1024-byte buffer and refuses more than 1000 bytes; keep the final assembled line within1023 bytes.
+# The runtime arguments this board brings up with: the command line extracted from the
+# working addon18 image, verbatim (deduped by name, so a later same-name entry would
+# replace the earlier one at its position). DarwinBoot copies the line into a
+# 1024-byte buffer and refuses more than 1000 bytes; keep the assembled line within
+# 1023 bytes.
 kernel_args = [
   "-v",
   "keepsyms=1",
-  "cpus=1",
+  "cpus=8",
   "diting_allow_unauthenticated_root=1",
   "cs_enforcement_disable=1",
   "cs_library_val_enable=0",
@@ -235,9 +236,8 @@ kernel_args = [
   "diting_adsp=2",
   "diting_audio=2",
   "diting_ufs_readwrite=1",
-  # Temporary bring-up aid: on a UFS failure the driver logs the report and then holds the CPU,
-  # so the panel keeps the failing line long enough to photograph. Remove once root mounts.
-  "diting_ufs_stall=1",
+  "diting_ufs_stall=0",
+  "diting_wifi=1",
   "ignition_level=1",
   "dyld_flags=0x8",
   "launchd_rd=md0",
@@ -248,19 +248,26 @@ kernel_args = [
   "applog_name=launchd,backboardd,SpringBoard,containermanagerd,lsd,runningboardd,logd_helper,powerd",
   "diting_software_keybag=1",
   "diting_display=1",
-  "diting_software_ui=1",
-  "diting_ui_software=1",
+  "diting_software_ui=0",
+  "diting_ui_software=0",
   "diting_touch=1",
   "diting_buttons=1",
   "diting_build=ipados18-22H374",
   "diting_gpu_scanout=1",
-  "diting_gpu_pool_mib=0",
+  "diting_gpu_pool_mib=256",
   "diting_metal_global=1",
   "diting_gpu_lock_max=1",
-  "diting_usb=1",
+  "diting_usb=0",
   "diting_usb_mux=1",
   "diting_usb_iphone=1",
   "diting_rootful=1",
+  "diting_console_pause=0",
+  "diting_data_reserve=4",
+  "diting_ramoops_ufs=1",
+  "diting_adreno_start=1",
+  "diting_metal=1",
+  "gpu-addon=1",
+  "diting_adsp-fw=/private/var/ngpu/firmware",
 ]
 
 [payload.runtime]

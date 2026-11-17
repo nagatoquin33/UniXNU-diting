@@ -5,13 +5,13 @@ Diting 的 QCA6490 Wi-Fi 传输：PCIe0 + MHI + QRTR/QMI 上的真实 ath11k，�
 ## 适配硬件
 
 - SM8475 / QCA6490：PCIe0（`wlan-enable` GPIO80、reset GPIO94、clkreq GPIO95、wake GPIO96、xo-clk GPIO204）
-- MHI + QRTR + QMI；供电请求使用 Diting APSS DRV2 的活动 TCS1，与 ADSP 共用同一把锁。
+- MHI + QRTR + QMI；供电请求经 Diting APSS DRV2 的活动 TCS1（共享槽），与 ADSP 共用同一把板级锁。
 - MSI 接收器按 DT `int_global_int` 路由到 SPI140（GIC INTID172），PARF MSI0 为 bit23
 - 独立 SMMU context，SID `0x1c01`；固件 `amss.bin`、`m3.bin`、`bdwlan*`、`regdb.bin` 取自本机 modem 的 `image/qca6490`
 
 ## 仓库关系
 
-Diting 专属实现；`ath11k/` 是 Linux v7.0.14 ath11k 的 PCI/MHI/QMI 部分，接 UniXNU 的 station ABI。上游 `UniXNU/Ath12kWifi` 是 ath12k 的另一套。
+Diting 专属实现；`ath11k/` 是 Linux v7.0.14 ath11k 的 PCI/MHI/QMI 部分，接 UniXNU 的 station ABI。上游 `UniXNU/Ath12kWifi` 是 ath12k 的另一套。本栈已与 `UniXNU-zizhan @ 034a0b0` 的 `PongWifi` 整包对齐，仅保留 Diting 板级常量与 MSI 路由。
 
 ## 说明
 
@@ -31,20 +31,15 @@ Diting 专属实现；`ath11k/` 是 Linux v7.0.14 ath11k 的 PCI/MHI/QMI 部分�
 - `scripts/build-diting-wifi-native.py`：编译板级/网络代码，合并归档并延后注册网络类。
 - `CONFIG_XNU_DITING_WIFI=y`：构建并链接归档；`diting_wifi=1` 启动板级工作线程。
 
-`diting_wifi` 支持分级冷启动二分（用于在无声复位前定位挂死阶段；每级都
-打印 `staged stop` 标记并返回正常启动路径）：
+`diting_wifi` 现在只作开关：`=1`（或任意非零值）走完整启动（供电 → PCIe → SMMU → MHI/QMI → 固件 → station）。
+此前的 `diting_wifi=2..9` 分级冷启动二分（staged stop）已随 zizhan 回灌移除，`>1` 一律按已启用处理。
 
-- `=2`：WLAN 电源轨 RPMh 投票完成后停止（不写 GCC/PCIe；每条轨投票前打印轨名）
-- `=7`：WLAN_EN/XO latch GPIO 断言后停止（GCC 首写前）
-- `=8`：PCIe0 GDSC 上电完成后停止（时钟配置前）
-- `=9`：PCIe0 时钟分支全部就绪后停止（BCR 复位前）
-- `=3`：PCIe0 双复位完成后停止（PARF 首次访问前）
-- `=4`：PHY 表 + LTSSM 链路训练完成后停止（ATU/端点配置空间前）
-- `=5`：`coldLink()` 全部完成（含 BAR）后停止（SMMU 隔离前）
-- `=6`：SMMU context 与 DMA arena 就绪后停止（MSI/ath11k 前）
-- `=1` 或其它非零值：完整启动（PCIe + SMMU + MHI/QMI + 固件 + station）
+供电轨分两段：`smpe3`（IPA 轨）默认不投票——`diting_wifi_ipa` 缺省 `0` 时该轨被跳过并打印
+`ipa rail smpe3 deferred`；置 `diting_wifi_ipa=1` 才恢复。`configs/diting-wifi-sm8475.json` 中的
+其余轨照常参与投票，`smpe3` 条目保留但未删。
 
-APSS DRV2 把 TCS0–2 配为活动槽。触控使用 TCS0，Wi-Fi 与 ADSP 共享 TCS1。使用 SM8475 GCC
+APSS DRV2 的活动 TCS 槽（live-DT 映射）为 TCS0–TCS2：触控用 TCS0，Wi-Fi 与 ADSP 共享 TCS1，GPU 用 TCS2。
+TCS3–TCS4 为 sleep/保留槽。使用 SM8475 GCC
 `0x7bxxx`、真实 PHY 表和 cmd-db `SN7` 带宽投票。CPU 和 SMMU 的 DMA 环使用
 Normal-NC，页表独立保留。使用 DesignWare 控制器的 MSI 接收器，按 Diting DT
 `int_global_int` 路由到 SPI140（GIC INTID172）；PARF MSI0 为 bit23。
@@ -54,7 +49,8 @@ Normal-NC，页表独立保留。使用 DesignWare 控制器的 MSI 接收器，
 固件来自本机 modem 中 `image/qca6490`，仅嵌入忽略的本地构建产物。
 BDF 按 QMI chip/board ID 使用 Nothing CNSS2 的文件命名规则，AMSS 按
 实际硬件 major 选择；不将 PCI revision 当成固件 major，不随机选择 board-data。
-无线地址使用固件报告的地址，不伪造出厂 MAC。WPA nonce 使用 XNU `read_random`。
+无线地址使用固件报告的真实硬件 MAC；按上游约定，station 仅在拿到真实 MAC 后才发布，
+不读取 `wlan_mac.bin`、不合成 `station_identity`、不伪造出厂 MAC。WPA nonce 使用 XNU `read_random`。
 
 ## 当前证据
 

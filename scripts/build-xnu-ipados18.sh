@@ -142,6 +142,11 @@ while IFS= read -r LATE_PATCH; do
 done < <(python3 - <<'PY_LATE_PATCHES'
 from pathlib import Path
 patches = [p.resolve() for d in ('patches/xnu', 'patches/xnu-ipados18') for p in Path(d).glob('zz*diting*.patch')]
+# The numbered board patches stack on 0001: while 0002+ stay applied the reverse check of 0001
+# fails and the fuzz fallback below would undo it (zizhan g100 lost 0001 that way). Strip every
+# four-digit patch except 0001 from both patch dirs so the loop re-applies the series in order;
+# the mtime snapshot keeps unchanged files from rebuilding.
+patches += [p.resolve() for d in ('patches/xnu', 'patches/xnu-ipados18') for p in Path(d).glob('[0-9][0-9][0-9][0-9]-*.patch') if not p.name.startswith('0001-')]
 patches += [Path('patches/xnu/zzz-boot-progress.patch').resolve(),
             Path('patches/xnu/zzy-native-gpu-addon-mount.patch').resolve()]
 for patch in sorted(set(patches), reverse=True):
@@ -236,11 +241,26 @@ for PATCH in "${PATCHES[@]}"; do
     # fuzz fallback below would let patch auto-reverse it (deleting
     # osfmk/vm/vm_link_compat.c). Changed lines are still required with -C0.
     echo "Already applied: $(basename "$PATCH")"
-  elif patch --dry-run --batch --fuzz=3 -p1 -d .cache/xnu-work < "$PATCH" >/dev/null 2>&1; then
-    patch --batch --fuzz=3 -p1 -d .cache/xnu-work < "$PATCH"
   else
-    echo "Patch does not apply cleanly to XNU $XNU_VERSION: $PATCH" >&2
-    exit 1
+    # --forward: plain --batch takes hunks that look applied as reversed and undoes them
+    # (the zizhan g100 build lost 0001 that way). Skip already-applied hunks instead.
+    # The exit status cannot judge this path: --forward returns 1 whenever hunks are
+    # skipped as already applied, which is the normal state for 0001 while the strip
+    # above has removed the 0002+ patches that duplicate its postimage. Only the
+    # dry-run output separates a partial application from a real rejection.
+    DRYRUN_LOG=".cache/patch-dryrun-$(basename "$PATCH").log"
+    patch --dry-run --forward --batch --fuzz=3 -p1 -d .cache/xnu-work < "$PATCH" > "$DRYRUN_LOG" 2>&1 || true
+    if grep -Eq 'hunks? FAILED|No file to patch|can.t find file|malformed patch|Only garbage' "$DRYRUN_LOG"; then
+      echo "Patch does not apply cleanly to XNU $XNU_VERSION: $PATCH" >&2
+      echo "dry-run log: $ROOT/$DRYRUN_LOG" >&2
+      exit 1
+    fi
+    rm -f "$DRYRUN_LOG"
+    # Skipped (already-applied) hunks still exit 1 here; only a status above 1 is a
+    # failure worth the ERR trap. --forward drops each skipped hunk into <file>.rej;
+    # they describe the apply the file already carries, so remove the litter.
+    patch --forward --batch --fuzz=3 -p1 -d .cache/xnu-work < "$PATCH" || [ $? -eq 1 ]
+    find .cache/xnu-work -name '*.rej' -delete
   fi
 done
 python3 - <<'PY_PATCH_TIMES'

@@ -3,8 +3,17 @@
 #define DITING_PLATFORM_RESOURCES_H
 #include <stdbool.h>
 #include <stdint.h>
-/* Diting 原厂设备树的活动槽 0–2。触控使用 0，Wi-Fi 与 ADSP 共享 1。 */
-enum { DITING_RPMH_SHARED_TCS = 1 };
+/* Diting 原厂设备树 live DT: rsc@17a00000 qcom,tcs-config declares ACTIVE_TCS
+ * command slots 0–2 and SLEEP_TCS slots 3–4 (sleep). Slot map:
+ *   TCS0 = touch (Goodix IOVDD via diting_rpmh_vote)
+ *   TCS1 = Wi-Fi + ADSP shared votes
+ *   TCS2 = GPU ARC parent votes
+ * TCS3/TCS4 are sleep slots and must not carry active client votes. */
+enum {
+    DITING_RPMH_TOUCH_TCS  = 0,
+    DITING_RPMH_SHARED_TCS = 1,
+    DITING_RPMH_GPU_TCS    = 2,
+};
 #ifdef __cplusplus
 extern "C" {
 #endif

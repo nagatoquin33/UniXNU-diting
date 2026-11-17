@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: BSD-2-Clause-Patent */
 /* SM8475 cold GMU startup. No A740/Redwood platform owner or ready device.
  * All MMIO belongs to Diting's captured DT. This driver is the sole XNU owner
- * of the GPU SMMU and APSS DRV2 active TCS3 (no generic RPMh driver is linked).
+ * of the GPU SMMU and APSS DRV2 active TCS DITING_RPMH_GPU_TCS (no generic
+ * RPMh driver is linked).
  * Do not steal a live master, a busy TCS or unrelated stream/context bank.
  */
 #include <IOKit/IOLib.h>
@@ -105,15 +106,17 @@ static unsigned retained_corner(const DitingPowerResource &rail)
 }
 static bool vote_parents(const DitingPowerInputs &in)
 {
-    // Diting live DT: APSS DRV2, TCS layout sleep0..2, active3..4, wake5..6.
-    // Only active TCS3 is leased here. Sleep/wake and other drivers are intact.
+    // Diting live DT (rsc@17a00000 qcom,tcs-config): active command slots are
+    // TCS0..2; TCS3/4 are sleep slots. Slot map: touch=0, Wi-Fi/ADSP shared=1,
+    // GPU=2. This driver leases only DITING_RPMH_GPU_TCS; sleep slots and the
+    // other active slots stay owned by their clients.
     uint32_t caps=rd(rsc,0xc);
     // DRV_NUM_TCS_SHIFT6 * Diting drv-id2. DT reserves eight TCSes including
     // fast-path7. NCPT is the actual five-bit per-TCS command capacity.
     unsigned count=(caps>>12)&63,ncpt=(caps>>27)&31;
     if(count<8 || ncpt<2){record("SKIP APSS DRV2 capacity",1,caps,(uint64_t(count)<<32)|ncpt);return false;}
-    const size_t base=0xd00+3*0x2a0;
-    if(!rd(rsc,base+0x18)){record("SKIP active TCS3 busy",1,rd(rsc,base+0x14),rd(rsc,base+0x1c));return false;}
+    const size_t base=0xd00+DITING_RPMH_GPU_TCS*0x2a0;
+    if(!rd(rsc,base+0x18)){record("SKIP active GPU TCS busy",1,rd(rsc,base+0x14),rd(rsc,base+0x1c));return false;}
     uint32_t cx=retained_corner(in.cx);
     uint32_t mx=retained_corner(in.mx);
     if(cx==16 || mx==16){record("SKIP ARC AUX levels",1,cx,mx);return false;}
@@ -129,14 +132,14 @@ static bool vote_parents(const DitingPowerInputs &in)
         }
     }
     // ARC commands use AUX indices (not the common corner number).
-    wr(rsc,0xd00,rd(rsc,0xd00)&~(1u<<3));
+    wr(rsc,0xd00,rd(rsc,0xd00)&~(1u<<DITING_RPMH_GPU_TCS));
     uint32_t control=rd(rsc,base+0x14)&~(1u<<24);
     wr(rsc,base+0x14,control);
     if(!poll(rsc,base+0x14,~0u,control,500)){record("FAIL TCS trigger clear",1,rd(rsc,base+0x14),control);return false;}
     control&=~(1u<<16);wr(rsc,base+0x14,control);
     if(!poll(rsc,base+0x14,~0u,control,500)){record("FAIL TCS enable clear",1,rd(rsc,base+0x14),control);return false;}
-    wr(rsc,base+0x1c,0);wr(rsc,0xd08,1u<<3);
-    if(!poll(rsc,0xd04,1u<<3,0,500)){record("FAIL stale TCS completion clear",1,rd(rsc,0xd04));return false;}
+    wr(rsc,base+0x1c,0);wr(rsc,0xd08,1u<<DITING_RPMH_GPU_TCS);
+    if(!poll(rsc,0xd04,1u<<DITING_RPMH_GPU_TCS,0,500)){record("FAIL stale TCS completion clear",1,rd(rsc,0xd04));return false;}
     const uint32_t addresses[]={in.mx.address,in.cx.address},values[]={mx,cx};
     for(unsigned i=0;i<2;i++) {
         wr(rsc,base+0x30+20*i,0x10108); // 8bytes, write, real response required.
@@ -146,7 +149,7 @@ static bool vote_parents(const DitingPowerInputs &in)
     wr(rsc,base+0x14,1u<<16);
     if(!poll(rsc,base+0x14,~0u,1u<<16,500)){record("FAIL TCS AMC enable",1,rd(rsc,base+0x14));return false;}
     wr(rsc,base+0x14,(1u<<16)|(1u<<24));
-    // No XNU RSC IRQ handler is installed. The TCS3 IRQ is intentionally
+    // No XNU RSC IRQ handler is installed. The GPU TCS IRQ is intentionally
     // masked, so IRQ_STATUS is not a completion prerequisite. Require BOTH
     // real commands ISSUED|COMPL and actual TCS idle, as the vendor's polled
     // path observes hardware status rather than an enabled IRQ indication.
@@ -158,11 +161,11 @@ static bool vote_parents(const DitingPowerInputs &in)
         first=rd(rsc,base+0x3c);second=rd(rsc,base+0x50);idle=rd(rsc,base+0x18);
         bool commands=(first&0x10100)==0x10100 && (second&0x10100)==0x10100;
         if(!commands || !idle)progressed=true;
-        if(commands && idle && (progressed || (rd(rsc,0xd04)&(1u<<3)))){complete=true;break;}
+        if(commands && idle && (progressed || (rd(rsc,0xd04)&(1u<<DITING_RPMH_GPU_TCS)))){complete=true;break;}
         IODelay(10);
     }
     if(!complete){record("FAIL ARC completion",1,(uint64_t(first)<<32)|second,idle);return false;}
-    wr(rsc,base+0x1c,0);wr(rsc,0xd08,1u<<3);
+    wr(rsc,base+0x1c,0);wr(rsc,0xd08,1u<<DITING_RPMH_GPU_TCS);
     // Clear only the completed transaction's trigger, matching vendor reclaim.
     // Keep the acknowledged votes and parent resources retained.
     wr(rsc,base+0x14,rd(rsc,base+0x14)&~(1u<<24));
