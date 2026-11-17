@@ -240,6 +240,15 @@ for PATCH in "${PATCHES[@]}"; do
         continue
       fi
       ;;
+    iig-method-forwarders.patch|0000-iig-method-forwarders.patch)
+      # The Linux iig shim emits the declarations but not these forwarder
+      # definitions; Apple's iig emits the complete pair on macOS, and adding
+      # the definitions alone fails with "does not match any declaration".
+      if [ "$(uname -s)" = "Darwin" ]; then
+        echo "Skipping $(basename "$PATCH") on macOS: Apple's iig emits the forwarders"
+        continue
+      fi
+      ;;
   esac
   echo "Applying XNU patch: $(basename "$PATCH")"
   if git -C .cache/xnu-work apply --reverse --check "$PATCH" >/dev/null 2>&1; then
