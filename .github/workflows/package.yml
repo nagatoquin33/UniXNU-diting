@@ -455,6 +455,7 @@ jobs:
             --unique-chip-id "$UNIXNU_UNIQUE_CHIP_ID" \
             --volume-layout "$RUNNER_TEMP/volume-layout.json" \
             --hardware-dtb "$DTB" \
+            --cpus 8 \
             --ufs-probe
           ls -l "$WORK/boot"
       - name: self-contained v4 (shim + firmware)
