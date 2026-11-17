@@ -21,8 +21,5 @@ commit = "8b02fc711d41a40477bfe857dd39755f250d1d7e"
 [source."libpthread"]
 commit = "c0e60fb5ecfc54cf379c261d3f9572cc22ded891"
 
-[source."sm8475"]
-commit = "f62243e56a30472deed9112631b2480ab461df3e"
-
 [source."xnu"]
 commit = "43a90889846e00bfb5cf1d255cdc0a701a1e05a4"
