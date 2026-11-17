@@ -38,6 +38,9 @@ done
 UEVI=$(cd "$UEVI" && pwd)
 DEVICE=$(cd "$DEVICE" && pwd)
 mkdir -p "$OUT"
+# The build changes directory into the UEFI tree; resolve a relative --out
+# against the invocation directory before that happens.
+OUT=$(cd "$OUT" && pwd)
 
 log() { printf '== %s\n' "$*"; }
 

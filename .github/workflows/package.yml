@@ -62,7 +62,7 @@ jobs:
           bash device/scripts/linux/build-diting-fd.sh \
             --uefi-dir uefi-mondrian \
             --device device \
-            --out out
+            --out "$GITHUB_WORKSPACE/out"
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
