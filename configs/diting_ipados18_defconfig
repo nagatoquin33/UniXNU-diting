@@ -28,9 +28,10 @@ CONFIG_XNU_NATIVE_OFFLINE_GPU=n
 CONFIG_XNU_NATIVE_PAN=y
 CONFIG_XNU_NATIVE_RAM_BLOCK=n
 CONFIG_XNU_NATIVE_TRUST_CACHE=n
-# The IOGPUFamily prelink root closure pulls Apple's IOSurface.kext, which owns
-# IOSurfaceRootUserClient and its traps; the MiniIOSurface user client is then omitted.
-CONFIG_XNU_PRELINKED_IOSURFACE=y
+# The zizhan library_only_components recipe prelinks IOGPUFamily/IOSurface as
+# library-only, so Apple's IOSurface.kext is NOT part of the root closure and does
+# not own IOSurfaceRootUserClient: the MiniIOSurface user client stays compiled in.
+CONFIG_XNU_PRELINKED_IOSURFACE=n
 CONFIG_XNU_NATIVE_UFS=y
 CONFIG_XNU_NATIVE_VIRTIO_BLOCK=n
 CONFIG_XNU_NATIVE_VIRTIO_CONSOLE=n

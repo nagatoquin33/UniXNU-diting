@@ -10783,7 +10783,7 @@ index e050e53..27157d6 100644
 +    diting_ram_bytes = total;
 +}
 +
-++static void
++static void
 +diting_ram_init(boot_args *args)
 +{
 +    DTEntry chosen;
