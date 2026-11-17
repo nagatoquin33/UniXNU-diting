@@ -230,6 +230,17 @@ for PATCH in "${PATCHES[@]}"; do
     echo "Skipping zzz-boot-progress.patch: optional kernel boot tracing is disabled in this baseline"
     continue
   fi
+  case "$(basename "$PATCH")" in
+    linux-host-tools.patch|0000-linux-host-tools.patch|linux-link-shims.patch|0000-linux-link-shims.patch)
+      # These patches make the host tools build on Linux (hostcompat.h and the
+      # Linux link shims). macOS/Xcode already provides the native host tools,
+      # and its SDK has no usr/include/compat/hostcompat.h.
+      if [ "$(uname -s)" = "Darwin" ]; then
+        echo "Skipping $(basename "$PATCH") on macOS: native host tools already provide it"
+        continue
+      fi
+      ;;
+  esac
   echo "Applying XNU patch: $(basename "$PATCH")"
   if git -C .cache/xnu-work apply --reverse --check "$PATCH" >/dev/null 2>&1; then
     echo "Already applied: $(basename "$PATCH")"
