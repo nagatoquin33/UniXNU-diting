@@ -33,6 +33,8 @@ sys.path.insert(0, str(PROJECT / 'tools/apfs'))
 import apfs
 sys.path.insert(0, str(PROJECT / 'tools'))
 from sparsebundle import storage_for
+sys.path.insert(0, str(PROJECT / 'userland'))
+import metal_services18
 
 CORE = '''com.apple.notifyd com.apple.cfprefsd.xpc.daemon com.apple.cfprefsd.xpc.daemon.system
 com.apple.logd com.apple.syslogd com.apple.distnoted.xpc.daemon com.apple.diagnosticd
@@ -544,7 +546,11 @@ def jobs(root, cryptex, overlay, out, app_cryptex=None):
     # The restore policy reads this local cache directly; no stale stock
     # signature is paired with this adapted, development-only cache.
     put_plist(overlay / 'System/Library/xpc/launchd.plist', cache)
+    metal_changes = metal_services18.configure(overlay)
+    if not any(item.get('label') == 'com.apple.cameracaptured' for item in metal_changes):
+        raise RuntimeError('com.apple.cameracaptured missing from adapted 22H374 service cache')
     dump(out / 'jobs-report.json', {'jobs': records, 'resources': resources,
+         'metal_services': metal_changes,
          'missing_core_labels': sorted(set(CORE) - selected),
          'service_cache': {'version': 7, 'jobs': len(cached_jobs), 'source_build': '22H374',
                            'path': '/System/Library/xpc/launchd.plist'}})
