@@ -50,6 +50,10 @@ commit = "1b96f8f04b9dff4dc0277ac43625bf694e62c5aa"
 name = "sm8475"
 kind = "soc"
 local = "migration/format2/soc-seed"
+# build-kernel.py / build-diting-hardware-dtb.py read this path to resolve
+# the "soc:dts" include directory; it must stay even though the resolver
+# uses the local entry above.
+path = "migration/format2/soc-seed"
 
 # DitingPlatform24 is not a feed source: the kit ships in this repository at
 # kits/DitingPlatform24, so the resolver takes it from the device directories.
