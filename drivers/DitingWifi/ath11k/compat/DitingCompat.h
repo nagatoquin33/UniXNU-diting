@@ -2,20 +2,7 @@
 #ifndef DITING_ATH11K_COMPAT_H
 #define DITING_ATH11K_COMPAT_H
 #include "lx_pci.h"
-/* Linux permits side effects in wait conditions. ath11k's WMI condition
- * transfers skb ownership on success; the shared shim used to evaluate it
- * again when returning, sending the same skb twice. Check once per round
- * and honor deadlines even while other IRQ/work items remain busy. */
-#undef wait_event_timeout
-#define wait_event_timeout(w, cond, timeout) ({ \
-    unsigned long diting_end = jiffies + (timeout); long diting_result; (void)(w); \
-    for (;;) { \
-        if (cond) { long diting_left = (long)(diting_end - jiffies); \
-            diting_result = diting_left > 0 ? diting_left : 1; break; } \
-        if (time_after(jiffies, diting_end) || jiffies == diting_end) { diting_result = 0; break; } \
-        if (!lx_pump()) lx_idle(1); \
-    } \
-    diting_result; })
+#include "DitingWait.h"
 typedef unsigned long kernel_ulong_t;
 #undef IS_ENABLED
 #define DITING_DEFINED_1 0,

@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: BSD-2-Clause-Patent */
+/* Ported from UniXNU-zizhan PongWifi @ 034a0b0 */
 /* Diting / SM8475 QCA6490 PCIe0 cold start. Board facts come from live DT.
  * Linux ath11k owns MHI/QMI/radio state. Optional failure leaves boot running;
  * endpoint DMA storage and translation tables stay retained until reset. */
@@ -16,6 +17,7 @@
 #include "nw_abi.h"
 #include "../DitingAdreno/ArmSmmu4K/ArmSmmu4KProgram.h"
 #include "DitingWifiInputs.h"
+#include "DitingWifiTestInputs.h"
 #include "QcomRpmh.h"
 #include "../DitingPower/DitingPlatformResources.h"
 extern "C" {
@@ -27,6 +29,8 @@ int armcpu_spi_attach(uint32_t, bool, void (*)(void *), void *, uint32_t *, uint
 void diting11_lx_irq_raise_all(void);
 void diting_wifi_net_start(const uint8_t mac[6]);
 bool diting_wifi_net_prepare(void);
+bool diting_wifi_net_has_ipv4(void);
+void diting_wifi_net_diagnostics(void);
 void diting_wifi_net_failed(void);
 int nw_wifi_firmware_error(void);
 void DitingWifiNetStaticInit(void);
@@ -34,15 +38,14 @@ bool diting_ufs_ready(void);
 extern const uint8_t diting_wifi_firmware[], diting_wifi_firmware_end[];
 }
 extern kmod_info_t g_kernel_kmod_info;
-extern "C" int native_ufs_debug_write(uint64_t,uint32_t,const void *) __attribute__((weak_import));
-extern "C" vm_offset_t diting_ramoops_mapped_base(void);
-extern "C" uint32_t diting_ramoops_zone_size(unsigned);
+extern "C" { volatile uint64_t diting_wifi_progress[3]={}; }
 namespace {
 #include "../NativeUfs/SmmuTakeover.h"
 constexpr uint64_t Iova=0xa0000000;
 constexpr unsigned MsiAddressLo=0x820, MsiAddressHi=0x824, MsiEnable=0x828, MsiMask=0x82c, MsiStatus=0x830;
 constexpr unsigned PcieGlobalIntid=32+140, ParfMsi0=1u<<23;
-constexpr size_t ArenaBytes=64*1024*1024, TableBytes=512*1024;
+constexpr size_t TableBytes=512*1024;
+size_t ArenaBytes;
 struct Window {
  IOMemoryMap *map=nullptr; volatile uint8_t *v=nullptr; size_t n=0;
  bool open(uint64_t pa,size_t bytes) {
@@ -59,16 +62,11 @@ unsigned pmicChannels;
 IOBufferMemoryDescriptor *arena,*tables,*msiPage;
 uint8_t *arenaVa; uint64_t tablePa,msiPa; uint64_t cbOffset;
 unsigned pcieCap,msiCap; volatile uint32_t stopped,wake; bool dmaOwned,hostMmioReady;
-unsigned stageLimit=1;
 uint64_t initDeadline;
 uint64_t now() {uint64_t ns=0;absolutetime_to_nanoseconds(mach_absolute_time(),&ns);return ns/1000000;}
-void forceFlush() {
- if(!native_ufs_debug_write)return;vm_offset_t b=diting_ramoops_mapped_base();
- if(!b)return;
- uint32_t blocks=(diting_ramoops_zone_size(0)+16+4095)/4096;if(blocks>512)blocks=512;
- if(blocks)native_ufs_debug_write(0,blocks,reinterpret_cast<const void *>(b));
-}
-void log(int level,const char *s) {if(level<7){IOLog("DitingWifi[%d]: %s\n",level,s);forceFlush();}}
+bool progressDiagnostic;
+void progress(unsigned phase) {if(progressDiagnostic){diting_wifi_progress[0]=phase;diting_wifi_progress[1]=now();diting_wifi_progress[2]++;}}
+void log(int level,const char *s) {if(level<7)IOLog("DitingWifi[%d]: %s\n",level,s);}
 bool fail(const char *s) {log(3,s);return false;}
 void clean(void *p,size_t n) {uintptr_t a=reinterpret_cast<uintptr_t>(p)&~uintptr_t(63),e=reinterpret_cast<uintptr_t>(p)+n;for(;a<e;a+=64)__asm__ volatile("dc civac,%0"::"r"(a):"memory");__asm__ volatile("dsb sy":::"memory");}
 bool wait(Window &w,size_t o,uint32_t mask,uint32_t value,unsigned ms) {uint64_t end=now()+ms;do {if((w.r(o)&mask)==value)return true;IOSleep(1);}while(now()<end);return false;}
@@ -131,9 +129,6 @@ bool railReady(const DitingWifiRail &r) {
   // deadline; a single transient read is not evidence of an unpowered rail.
   // Never accept partially old status/enable/voltage as a coherent sample.
   // Identification uses the same observer transport as the state reads.
-  // services93's first smpe3 read returned 00/00 before any voltage query;
-  // it must receive the same bounded retry as the rest of the sample.
-  // A successful sample still requires the exact Diting PMIC type/subtype.
   if(!pmicRead(unsigned(channel),4,id,2)||id[0]!=r.type||id[1]!=r.subtype||
      !pmicRead(unsigned(channel),8,&status,1)||!pmicRead(unsigned(channel),0x46,&enable,1)||!pmicRead(unsigned(channel),0x40,voltage,2)) {
    ++readFailures;IOSleep(1);continue;
@@ -166,44 +161,34 @@ bool bcmVote(const uint8_t *copy,const char *name) {
  }return fail("PCIe NoC SN7 cmd-db resource absent");
 }
 bool supplies() {
- log(6,"supplies: pre-pmicOpen");
- if(!pmicOpen())return fail("supplies: pmicOpen failed");
- log(6,"supplies: pmic open, pre cmddb map");
- if(!db.open(0x80860000,0x20000))return fail("supplies: cmd-db map failed");
- log(6,"supplies: cmd-db mapped, copying");
+ if(!pmicOpen()||!db.open(0x80860000,0x20000))return false;
  uint8_t *copy=static_cast<uint8_t *>(IOMallocData(0x20000));if(!copy)return false;
  for(unsigned i=0;i<0x20000;i+=4){unsigned v=db.r(i);memcpy(copy+i,&v,4);}
- log(6,"supplies: cmd-db copied, voting rails");
+ // The IPA rail shares the WLAN power tree but is optional for the data path.
+ // Keep its hardware record in the board profile while deferring its vote
+ // unless the caller explicitly enables it; this matches the first six rails
+ // the zizhan sequence commits before PCIe.
+ uint32_t ipa=0;PE_parse_boot_argn("diting_wifi_ipa",&ipa,sizeof ipa);
  bool ok=true;
- for(const auto &r:kDitingWifiRails) {QcomRpmhResource res={};if(qcom_cmd_db_find(copy,0x20000,r.name,&res)){ok=fail("required SM8475 rail missing in cmd-db");break;}
-  {char nm[24];snprintf(nm,sizeof nm,"rail %s a=%x",r.name,res.address);log(6,nm);}
-  forceFlush();
+ for(const auto &r:kDitingWifiRails) {
+  if(!strcmp(r.name,"smpe3")&&ipa!=1){log(6,"DitingWifi: ipa rail smpe3 deferred; diting_wifi_ipa=0");continue;}
+  QcomRpmhResource res={};if(qcom_cmd_db_find(copy,0x20000,r.name,&res)){ok=fail("required SM8475 rail missing in cmd-db");break;}
   // These are dedicated WLAN supplies, retained until endpoint reset. Their
   // minimum setpoints and maximum bounds are taken from this phone's DT.
-  if(!diting_rpmh_vote(res.address+8,7)){log(3,"rail vote hi failed");ok=false;break;}
-  {char nm[24];snprintf(nm,sizeof nm,"rail %s mid",r.name);log(6,nm);}
-  forceFlush();
-  if(!diting_rpmh_vote(res.address,r.mv)){log(3,"rail vote mid failed");ok=false;break;}
-  {char nm[24];snprintf(nm,sizeof nm,"rail %s lo",r.name);log(6,nm);}
-  forceFlush();
-  if(!diting_rpmh_vote(res.address+4,1)){ok=false;break;}
-  {char nm[24];snprintf(nm,sizeof nm,"rail %s lo done",r.name);log(6,nm);}
+  if(!diting_rpmh_vote(res.address+8,7)||!diting_rpmh_vote(res.address,r.mv)||!diting_rpmh_vote(res.address+4,1)){ok=false;break;}
   if(!railReady(r)){ok=fail("physical WLAN supply did not follow RPMh request");break;}
-  {char nm[24];snprintf(nm,sizeof nm,"rail %s done",r.name);log(6,nm);}
  }
  // Retain the actual highest allowed ARC parent votes, as the GPU owner
  // does; never lower a shared CX/MX vote inherited from another consumer.
  const char *parents[]={"mx.lvl","cx.lvl"};
- for(const char *name:parents)if(ok){log(6,name);forceFlush();QcomRpmhResource res={};if(qcom_cmd_db_find(copy,0x20000,name,&res)||!res.level_count){ok=false;break;}unsigned index=0;for(unsigned i=1;i<res.level_count;i++)if(res.levels[i]>res.levels[index])index=i;ok=diting_rpmh_vote(res.address,index);}
- forceFlush();
+ for(const char *name:parents)if(ok){QcomRpmhResource res={};if(qcom_cmd_db_find(copy,0x20000,name,&res)||!res.level_count){ok=false;break;}unsigned index=0;for(unsigned i=1;i<res.level_count;i++)if(res.levels[i]>res.levels[index])index=i;ok=diting_rpmh_vote(res.address,index);}
  // The actual PCIe ref_clk_src is RPMH_CXO_CLK, not just GCC CLKREF_EN.
  // clk-rpmh.c waipio_bi_tcxo votes xo.lvl=3 while this consumer is active.
- if(ok){log(6,"supplies: parents done, xo.lvl");forceFlush();QcomRpmhResource xo={};ok=!qcom_cmd_db_find(copy,0x20000,"xo.lvl",&xo)&&diting_rpmh_vote(xo.address,3);}
- if(ok){log(6,"supplies: pre SN7 bcm");forceFlush();ok=bcmVote(copy,"SN7");}
+ if(ok){QcomRpmhResource xo={};ok=!qcom_cmd_db_find(copy,0x20000,"xo.lvl",&xo)&&diting_rpmh_vote(xo.address,3);}
+ if(ok)ok=bcmVote(copy,"SN7");
  IOFreeData(copy,0x20000);if(ok)log(6,"SM8475 WLAN rail requests acknowledged");return ok;
 }
 bool coldLink() {
- log(6,"coldLink: pre-map");
  if(!gcc.open(0x100000,0xa0000)||!tlmm.open(0xf100000,0xd0000))return false;
  // REC leaves PCIe0 suspended. Only GCC/TLMM are accessible at this point:
  // even an LTSSM read from PARF can cause a NoC fault while GDSC/AHB is off.
@@ -211,18 +196,14 @@ bool coldLink() {
  // regulator/clock/reset sequence has completed.
  log(6,"PCIe0 cold start; power and bus clocks precede host MMIO");
  pin(94,1u|1u<<9,0);pin(95,3u|1u<<2,-1);pin(96,3u,-1);
- log(6,"coldLink: reset/clkreq pins done, pre WLAN_EN low");
  pin(80,1u|1u<<9,0);IOSleep(150);
- log(6,"coldLink: pre supplies()");
  if(!supplies())return false;
  // Sheng waits after the regulator transaction before releasing WLAN_EN.
  // The response completes the RPMh request, not the board's rail settling.
  IOSleep(20);
- if(stageLimit==2){log(6,"staged stop at 2: WLAN rails voted, no GCC/PCIe writes");return true;}
  // QCA6490 CNSS2: assert XO_CLK before WLAN_EN and keep the latch
  // asserted 2..5ms afterwards. GPIO204 is from this phone's DT.
  enableWlan();
- if(stageLimit==7){log(6,"staged stop at 7: WLAN_EN/XO latch asserted, pre-GCC");return true;}
  // A temporary boot can inherit the previous OS's suspended PIPE mux and
  // vote. Park on the real TCXO parent with the branch disabled before
  // resetting the core. Do not clock an uninitialized PHY from its output.
@@ -234,7 +215,6 @@ bool coldLink() {
  // SM8475 has a single PCIe0 GDSC at 7b004, no SM8550 PHY GDSC.
  gcc.w(0x7b004,gcc.r(0x7b004)&~1u);
  if(!wait(gcc,0x7b004,1u<<31,1u<<31,100))return fail("PCIe0 GDSC off");
- if(stageLimit==8){log(6,"staged stop at 8: PCIe0 GDSC on, pre-clock setup");return true;}
  // Follow the complete Sheng QMP clock sequence: keep PIPE on TCXO during
  // reset/table setup, then select the PHY output before PCS reset release.
  // Mixing an early external parent with a stopped PIPE loses that clock
@@ -256,13 +236,11 @@ bool coldLink() {
  gcc.w(0x9c004,gcc.r(0x9c004)|1);
  const unsigned branches[]={0x7b01cu,0x7b020u,0x7b028u,0x7b030u,0x7b034u};
  for(unsigned o:branches)if(!wait(gcc,o,1u<<31,0,100))return fail("PCIe clock remains halted");
- if(stageLimit==9){log(6,"staged stop at 9: PCIe0 clocks on, pre-reset");return true;}
  reset(0x7b000);
  // Diting DT names these core_reset and phy_reset. There is no
  // pcie_0_phy_pipe_reset entry: PHY_BCR resets the programmed PCS/SERDES.
  // Complete both resets before loading the vendor PHY sequence.
  reset(0x7c01c);
- if(stageLimit==3){log(6,"staged stop at 3: PCIe0 powered/clocked/reset, pre-PARF");return true;}
  if(!parf.open(0x1c00000,0x3000))return false;
  hostMmioReady=true;
  parf.w(0x1b0,parf.r(0x1b0)&~(1u<<8));
@@ -365,7 +343,6 @@ bool coldLink() {
   gcc.w(0x7b04c,1);gcc.w(0x7b048,gcc.r(0x7b048)|1);
   if(!wait(gcc,0x7b048,1,0,20))return fail("PCIe negotiated refgen update timeout");
  }
- if(stageLimit==4){log(6,"staged stop at 4: PCIe0 link trained, pre-ATU/endpoint");return true;}
  // Type-1 memory aperture, as in Sheng's endpoint setup, using Diting's
  // actual 0x60200000..0x63ffffff range rather than Sheng's 0x60300000.
  dbi.w(0x20,0x63f06020);
@@ -398,17 +375,30 @@ bool allocateArena() {
  // both MapperNone and WC (0x400) asks the buffer mapping for invalid mode
  // 12. This board has no global IOMapper; isolation() confirms that before
  // allocating. Physical segment queries still explicitly bypass mappers.
- // ARM64 IOKit's pageable-map allocator rejects objects above 96MiB.
- // Use a 64MiB VM-backed arena under that per-object limit and wire it
- // explicitly. Allocation failure still stops DMA; every returned Linux
- // allocation is range checked. Apply WC only to the owned wired pages.
- arena=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
-  IOOptionBits(kIODirectionInOut)|IOOptionBits(kIOMemoryPageable),ArenaBytes,4096);
- if(!arena)return fail("WiFi wired DMA arena allocation failed");
- if(arena->prepare()!=kIOReturnSuccess){arena->release();arena=nullptr;return fail("WiFi DMA arena wiring failed");}
- arenaVa=static_cast<uint8_t *>(arena->getBytesNoCopy());
- if(!arenaVa||(reinterpret_cast<uintptr_t>(arenaVa)&4095)||arena->getLength()!=ArenaBytes)return fail("WiFi DMA arena mapping invalid");
- bzero(arenaVa,ArenaBytes);return true;
+ // ARM64 IOKit's pageable-map allocator rejects objects above 96MiB, so the
+ // larger 128MiB option is only meaningful where that limit does not bind.
+ // Use a VM-backed arena under the per-object limit and wire it explicitly;
+ // the 64/128 MiB budget selects the allocation, never a physically
+ // contiguous region that fails after UI startup.
+ uint32_t preferred=64;
+ if(PE_parse_boot_argn("diting_wifi_dma_mib",&preferred,sizeof preferred)&&preferred!=64&&preferred!=128)
+  return fail("WiFi DMA budget must be 64 or 128 MiB");
+ const uint32_t budgets[]={preferred,64};
+ for(unsigned attempt=0;attempt<(preferred==64?1u:2u);++attempt) {
+  const size_t bytes=size_t(budgets[attempt])*1024*1024;
+  arena=IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
+   IOOptionBits(kIODirectionInOut)|IOOptionBits(kIOMemoryPageable),bytes,4096);
+  if(!arena){IOLog("DitingWifi: DMA allocation SKIP %u MiB; trying smaller actual budget\n",budgets[attempt]);continue;}
+  const bool prepared=arena->prepare()==kIOReturnSuccess;
+  arenaVa=prepared?static_cast<uint8_t *>(arena->getBytesNoCopy()):nullptr;
+  if(!arenaVa||(reinterpret_cast<uintptr_t>(arenaVa)&4095)||arena->getLength()!=bytes) {
+   if(prepared)arena->complete();arena->release();arena=nullptr;arenaVa=nullptr;
+   IOLog("DitingWifi: DMA wiring/mapping SKIP %u MiB\n",budgets[attempt]);continue;
+  }
+  ArenaBytes=bytes;bzero(arenaVa,ArenaBytes);
+  IOLog("DitingWifi: actual wired DMA budget %u MiB\n",budgets[attempt]);return true;
+ }
+ return fail("WiFi wired DMA arena allocation failed at all budgets");
 }
 int smmuRead32(void *,size_t off,uint32_t *out) {
  if(!out||(off&3)||off>smmu.n-4)return -1;
@@ -445,7 +435,7 @@ bool isolation() {
  auto plan=planUfsSmmu(0x1c01,Iova,ArenaBytes+4096,[](unsigned o){return smmu.r(o);},78,120);
  if(plan.error)return fail(plan.error);
  ArmSmmu4KConfig bc={32,36,tablePa,(ArenaBytes/4096)+1};
- constexpr size_t capacity=ArenaBytes/4096+1;
+ const size_t capacity=ArenaBytes/4096+1;
  auto ranges=IONewData(ArmSmmu4KRange,capacity);
  if(!ranges)return fail("WiFi DMA span metadata allocation failed");
  size_t count=1;ranges[0]={Iova,msiPa,4096,3,0,2};
@@ -494,14 +484,21 @@ bool isolation() {
  ArmSmmu4KProgramResult programmed={};
  const auto status=ArmSmmu4KProgramDisabledContext(&io,plan.bank,&cc,20000,&programmed);
  if(status!=ArmSmmu4KSuccess) {
-  IOLog("DitingWifi: SMMU program status=%u bank=%u phase=%u TTBR0=%llx TCR=%x TCR2=%x SCTLR=%x FSR=%x\n",
-   unsigned(status),plan.bank,programmed.phase,programmed.readback.ttbr0,programmed.readback.tcr,
-   programmed.readback.tcr2,programmed.readback.sctlr,programmed.fault_status);
+  IOLog("DitingWifi: SMMU program status=%u bank=%u phase=%u TTBR0=%llx TTBR1=%llx TCR=%x TCR2=%x CBAR=%x CBA2R=%x MAIR=%llx SCTLR=%x FSR=%x writes=%u polls=%u\n",
+   unsigned(status),plan.bank,programmed.phase,programmed.readback.ttbr0,programmed.readback.ttbr1,
+   programmed.readback.tcr,programmed.readback.tcr2,programmed.readback.cbar,programmed.readback.cba2r,
+   (uint64_t(programmed.readback.mair1)<<32)|programmed.readback.mair0,programmed.readback.sctlr,
+   programmed.fault_status,programmed.writes,programmed.poll_reads);
   return fail("WiFi SMMU context programming failed; SID remains detached");
  }
  cbOffset=programmed.context_offset;
- smmu.w(0xc00+4*plan.slot,plan.bank);if(!plan.migrate&&!plan.reuse)smmu.w(0x800+4*plan.slot,0x80001c01);
- if(smmu.r(0xc00+4*plan.slot)!=plan.bank||smmu.r(0x800+4*plan.slot)!=0x80001c01)return fail("WiFi SID routing failed");
+ const bool exids=(cc.id0>>8)&1;
+ const uint32_t validSmr=exids?0:UINT32_C(1)<<31;
+ const uint32_t validS2cr=exids?UINT32_C(1)<<10:0;
+ smmu.w(0xc00+4*plan.slot,plan.bank);
+ smmu.w(0x800+4*plan.slot,validSmr|0x1c01);
+ if(exids)smmu.w(0xc00+4*plan.slot,plan.bank|validS2cr);
+ if(smmu.r(0xc00+4*plan.slot)!=(plan.bank|validS2cr)||smmu.r(0x800+4*plan.slot)!=(validSmr|0x1c01))return fail("WiFi SID routing failed");
  dmaOwned=true;log(6,"exclusive SID1c01 native4K DMA and retained MSI landing page established");return true;
 }
 struct Block {uint32_t at,bytes;bool used;};Block blocks[16384];unsigned blockCount;
@@ -526,32 +523,6 @@ void poll() {if(nw_wifi_firmware_error()){log(3,"QCA6490 firmware failed; stop d
 void sleep(unsigned ms) {while(ms){poll();unsigned part=ms>100?100:ms;IOSleep(part);ms-=part;}poll();}
 int fwGet(const char *path,const uint8_t **data,size_t *size) {
  const char *name=path;for(const char *p=path;*p;p++)if(*p=='/')name=p+1;
- if(!strcmp(name,"wlan_mac.bin")) {
-  // The phone's mobile firmware may leave the permanent MAC empty. Use
-  // an explicitly software-assigned, installation-stable unicast address,
-  // as the upstream board ABI permits. Never send all-zero vdev identity.
-  static char identity[40];
-  if(!identity[0]) {
-   auto chosen=IORegistryEntry::fromPath("/chosen",gIODTPlane);
-   auto root=chosen?OSDynamicCast(OSData,chosen->getProperty("root-matching")):nullptr;
-   const char *bytes=root?static_cast<const char *>(root->getBytesNoCopy()):nullptr;
-   const size_t n=root?root->getLength():0;
-   const char marker[]="<key>UUID</key><string>";const size_t markerSize=sizeof(marker)-1;
-   const char *uuid=nullptr;
-   for(size_t i=0;bytes && i+markerSize+36<n;i++)if(!memcmp(bytes+i,marker,markerSize)){uuid=bytes+i+markerSize;break;}
-   char digits[32];unsigned count=0;
-   for(unsigned i=0;uuid && i<36;i++) {
-    const char c=uuid[i];if(c=='-')continue;
-    if(!((c>='0'&&c<='9')||(c>='A'&&c<='F')||(c>='a'&&c<='f'))){count=0;break;}
-    if(count<sizeof(digits))digits[count++]=c;
-   }
-   if(count==32)snprintf(identity,sizeof(identity),"Intf0MacAddress=02%.*s\n",10,digits+22);
-   if(chosen)chosen->release();
-   if(!identity[0])return -1;
-   IOLog("DitingWifi: locally administered address assigned from installation identity\n");
-  }
-  *data=reinterpret_cast<const uint8_t *>(identity);*size=strlen(identity);return 0;
- }
  // Linux WCN6855 hw2 firmware uses the vendor v2 image. Select from the
  // actual TCSR HW major (pci.c uses the same register), never PCI revision.
  if(!strcmp(name,"amss.bin")&&((bar.r(0x224)>>8)&15)==2)name="amss20.bin";
@@ -564,6 +535,79 @@ int cfgWrite(int o,int n,uint32_t v) {unsigned off=unsigned(o);if(off&0x80000000
 int msiTarget(uint32_t *lo,uint32_t *hi,uint32_t *data) {if(!dmaOwned)return -1;*lo=uint32_t(Iova+0x40);*hi=0;*data=0;return 0;}
 void *mapPhys(uint64_t pa,size_t n) {if(pa>=0x60200000&&pa<0x60400000&&n<=0x60400000-pa)return const_cast<uint8_t *>(bar.v)+pa-0x60200000;return nullptr;}
 volatile uint32_t msiArrivals;
+// Opt-in bring-up fixture: join only the exact locally supplied network,
+// after real scanning, and report protocol results without credentials.
+unsigned testReconnectState;
+void testNetwork(const nw_wifi_status &st) {
+ static bool checked=false,enabled=false,attempted=false,finished=false;
+ static bool alternate=false,reconnecting=false,rescanned=false;
+ static uint32_t firstBand=0;
+ static uint8_t firstBssid[6];
+ static uint64_t deadline=0, reconnectAt=0;
+ if(!checked) {
+  checked=true;uint32_t flag=0;
+  enabled=PE_parse_boot_argn("diting_wifi_test",&flag,sizeof flag)&&flag==1;
+  alternate=enabled&&PE_parse_boot_argn("diting_wifi_alt",&flag,sizeof flag)&&flag==1;
+  if(enabled&&PE_parse_boot_argn("diting_wifi_band",&firstBand,sizeof firstBand)&&
+     firstBand!=0&&firstBand!=2&&firstBand!=5) {
+   log(6,"WiFi association test SKIP: band must be 0, 2 or 5");enabled=false;
+  }
+  if(enabled&&(!kWifiTestSsidBytes||!kWifiTestKeyBytes)) {
+   log(6,"WiFi association test SKIP: no private network fixture");enabled=false;
+  }
+  deadline=now()+60000;
+ }
+ if(!enabled)return;
+ if(__atomic_load_n(&testReconnectState,__ATOMIC_ACQUIRE)==2) {
+  __atomic_store_n(&testReconnectState,3,__ATOMIC_RELEASE);
+  log(6,"WiFi lifecycle test RUNNING: disconnecting station");
+  nw_wifi_disconnect(); reconnectAt=now()+10000;
+ }
+ if(reconnectAt) {
+  if(now()<reconnectAt)return;
+  reconnectAt=0;attempted=false;finished=false;reconnecting=true;deadline=now()+60000;
+  log(6,"WiFi lifecycle test RUNNING: reconnecting to scanned network");
+ }
+ if(finished)return;
+ if(!attempted&&st.state==NW_STA_IDLE) {
+  nw_bss_info b={};
+  for(int i=0,n=nw_wifi_bss_count();i<n;++i) {
+   if(nw_wifi_bss_get(i,&b)||b.ssid_len!=kWifiTestSsidBytes||memcmp(b.ssid,kWifiTestSsid,kWifiTestSsidBytes))continue;
+   // Optional fixture control: scanner order must not decide which direction
+   // a cross-band regression exercises. Only admit the same private SSID.
+   const unsigned band=b.freq_mhz>=2400&&b.freq_mhz<2500?2:
+    b.freq_mhz>=4900&&b.freq_mhz<5925?5:0;
+   const unsigned wanted=alternate&&reconnecting&&firstBand?
+    (firstBand==2?5:2):firstBand;
+   if(wanted&&band!=wanted)continue;
+   if(alternate&&reconnecting&&!memcmp(b.bssid,firstBssid,sizeof firstBssid))continue;
+   int result=nw_wifi_connect(kWifiTestSsid,kWifiTestSsidBytes,b.bssid,
+    reinterpret_cast<const char *>(kWifiTestKey),kWifiTestKeyBytes);
+   attempted=true;deadline=now()+60000;
+   IOLog("DitingWifi: association test RUNNING: scanned target, request=%d\n",result);
+   if(result){finished=true;log(3,"WiFi association test FAIL: station refused request");}
+   break;
+  }
+  if(alternate&&reconnecting&&!attempted&&!rescanned) {
+   rescanned=true;
+   nw_wifi_scan(kWifiTestSsid,kWifiTestSsidBytes);
+  }
+ }
+ if(attempted&&st.state==NW_STA_UP&&diting_wifi_net_has_ipv4()) {
+  finished=true;log(6,"WiFi association test PASS: authenticated link and IPv4 address");
+  if(!reconnecting)memcpy(firstBssid,st.bssid,sizeof firstBssid);
+  else if(alternate)log(6,memcmp(firstBssid,st.bssid,sizeof firstBssid)?
+   "WiFi lifecycle test AP switch PASS: associated to distinct BSSID":
+   "WiFi lifecycle test AP switch FAIL: BSSID did not change");
+  unsigned idle=0;
+  __atomic_compare_exchange_n(&testReconnectState,&idle,1,false,__ATOMIC_RELEASE,__ATOMIC_RELAXED);
+  diting_wifi_net_diagnostics();
+ } else if(now()>=deadline) {
+  finished=true;
+  IOLog("DitingWifi: association test FAIL: target_found=%u state=%u result=%d IPv4=%u\n",
+   attempted,st.state,st.result,diting_wifi_net_has_ipv4());
+ }
+}
 void signalWorker() {__atomic_store_n(&wake,1,__ATOMIC_RELEASE);thread_wakeup(reinterpret_cast<event_t>(const_cast<uint32_t *>(&wake)));}
 void waitWorker(unsigned ms) {
  // UniXNU's MSI/TX wait: arm before rechecking, so an event in the gap
@@ -588,15 +632,12 @@ void irq(void *) {
  signalWorker();
 }
 void worker(void *,wait_result_t) {
+ uint32_t diagnostic=0;progressDiagnostic=PE_parse_boot_argn("diting_wifi_diag",&diagnostic,sizeof diagnostic)&&diagnostic==1;
  // UFS owns another SID on the same APPSSMMU: serialize initial bank lease.
  unsigned n=0;for(;n<180&&!diting_ufs_ready();n++)IOSleep(500);
  if(n==180){fail("UFS prerequisites absent; WiFi skipped");goto done;}
  IOSleep(2000);
- {char m[48];snprintf(m,sizeof m,"WiFi worker armed stage=%u",stageLimit);log(6,m);}
- if(!coldLink())goto done;
- if(stageLimit>=2&&stageLimit<=9){log(6,"staged stop retained; boot continues without isolation/firmware");goto done;}
- if(!isolation())goto done;
- if(stageLimit==6){log(6,"staged stop at 6: SMMU isolation and DMA arena ready");goto done;}
+ if(!coldLink()||!isolation())goto done;
  // nw_abi.h requires events before start/step. Early station completion
  // must not be lost while the board is still waiting for its hardware MAC.
  if(!diting_wifi_net_prepare()){fail("network event setup failed");goto done;}
@@ -613,14 +654,24 @@ void worker(void *,wait_result_t) {
   if(cfgWrite(4,2,6))goto done;
   initDeadline=now()+90000;int r=nw_wifi_start(&platform,&board);if(r){IOLog("DitingWifi: ath11k start failed=%d\n",r);goto done;}
  }
- {bool net=false,irqSeen=false;for(;;){if(!irqSeen&&__atomic_load_n(&msiArrivals,__ATOMIC_RELAXED)){irqSeen=true;log(6,"QCA6490 MSI delivered by GIC");}poll();int busy=nw_wifi_step();nw_wifi_status st={};nw_wifi_status_get(&st);
+ {bool net=false,irqSeen=false;uint64_t diagnosticsAt=0;for(;;){if(!irqSeen&&__atomic_load_n(&msiArrivals,__ATOMIC_RELAXED)){irqSeen=true;log(6,"QCA6490 MSI delivered by GIC");}progress(1);poll();progress(2);int busy=nw_wifi_step();progress(3);nw_wifi_status st={};nw_wifi_status_get(&st);progress(4);
    if(!net&&st.channels&&st.state!=NW_STA_OFF&&nw_wifi_stats.stage>=4&&!nw_wifi_stats.last_err){bool valid=false;for(unsigned i=0;i<6;i++)valid|=st.mac[i]!=0;if(valid&&!(st.mac[0]&1)){initDeadline=0;net=true;
      auto chosen=IORegistryEntry::fromPath("/chosen",gIODTPlane);if(chosen){chosen->setProperty("mac-address-wifi0",st.mac,6);chosen->release();}
      void *handle=OSMetaClass::preModLoad(g_kernel_kmod_info.name);if(!handle)goto done;
      DitingWifiNetStaticInit();if(OSMetaClass::postModLoad(handle)!=kIOReturnSuccess)goto done;
      diting_wifi_net_start(st.mac);log(6,"QCA6490 station ready; starting actual scan");nw_wifi_scan(nullptr,0);
    }}
-   waitWorker(busy?1:10);
+   if(net) {
+    progress(5);testNetwork(st);
+    if(now()>=diagnosticsAt) {
+     diagnosticsAt=now()+15000;
+     IOLog("DitingWifi: runtime state=%u scans=%u BSS=%u frames=%u MSI=%u receiver=%x dma-mib=%lu\n",
+      st.state,nw_wifi_stats.scans,nw_wifi_stats.bss_seen,nw_wifi_stats.frames,
+      __atomic_load_n(&msiArrivals,__ATOMIC_RELAXED),dbi.r(MsiStatus),(unsigned long)(ArenaBytes>>20));
+     progress(6);diting_wifi_net_diagnostics();
+    }
+   }
+   progress(7);waitWorker(busy?1:5);
  }}
  done: stopped=1;
  diting_wifi_net_failed();
@@ -632,12 +683,16 @@ void worker(void *,wait_result_t) {
 }
 }
 extern "C" void DitingWifiRandom(void *p,size_t n) {while(n){unsigned part=n>4096?4096:unsigned(n);read_random(p,part);p=static_cast<uint8_t *>(p)+part;n-=part;}}
+extern "C" bool diting_wifi_test_reconnect(void) {
+ unsigned ready=1;
+ return __atomic_compare_exchange_n(&testReconnectState,&ready,2,false,__ATOMIC_ACQ_REL,__ATOMIC_RELAXED);
+}
 extern "C" void diting_wifi_wake(void) {signalWorker();}
 extern "C" void native_wifi_logf(int level,const char *fmt,...) {char line[256];va_list a;va_start(a,fmt);vsnprintf(line,sizeof line,fmt,a);va_end(a);log(level,line);}
 extern "C" void diting_wifi_start_optional(void) {
  diting_rpmh_init();
  uint32_t enabled=0;if(!PE_parse_boot_argn("diting_wifi",&enabled,sizeof enabled)||!enabled)return;
- stageLimit=enabled;
+ if(enabled>1)IOLog("DitingWifi: diting_wifi=%u treated as enabled (staged bring-up removed)\n",enabled);
  static uint32_t started;if(__atomic_exchange_n(&started,1,__ATOMIC_ACQ_REL))return;
  // These network classes are linked into the native kernel, not loaded as a
  // separate kext. Register their metaclasses before publishing any service.

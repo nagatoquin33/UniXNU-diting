@@ -93,6 +93,23 @@ def main():
   header+='static constexpr unsigned %s=%du;\n'%(name,value)
 
  (out/'DitingWifiInputs.h').write_text(header)
+ # Optional unattended association fixture. Only a local private file may
+ # provide credentials; never put them in boot args, logs or source control.
+ test_path=os.environ.get('DITING_WIFI_TEST_CONFIG')
+ ssid=key=b''
+ if test_path:
+  test=json.loads(Path(test_path).read_text())
+  ssid=test['ssid'].encode('utf-8');key=test['psk'].encode('utf-8')
+  if not 1<=len(ssid)<=32 or not 8<=len(key)<=64 or b'\0' in ssid+key:
+   raise RuntimeError('Wi-Fi test requires a valid SSID and WPA2 PSK')
+  if len(key)==64 and any(c not in b'0123456789abcdefABCDEF' for c in key):
+   raise RuntimeError('64-byte Wi-Fi test PSK must be hexadecimal')
+ test_header='static constexpr unsigned kWifiTestSsidBytes=%d,kWifiTestKeyBytes=%d;\n'%(len(ssid),len(key))
+ for name,data in [('kWifiTestSsid',ssid),('kWifiTestKey',key)]:
+  test_header+='static const unsigned char %s[]={%s};\n'%(name,','.join(str(v) for v in data) or '0')
+ test_file=out/'DitingWifiTestInputs.h'
+ fd=os.open(test_file,os.O_WRONLY|os.O_CREAT|os.O_TRUNC,0o600)
+ with os.fdopen(fd,'w') as f:f.write(test_header)
  provenance_path=a.firmware.parent/'local-inputs.json'
  provenance=json.loads(provenance_path.read_text())
  source=provenance.get('source',{})
@@ -154,6 +171,8 @@ def main():
    obj=out/'DitingWifiNet.late.o';obj.write_bytes(raw)
   objects.append(obj)
  obj=out/'DitingWifiFirmware.o';subprocess.run(['xcrun','clang','-target','arm64-apple-ios18.0','-c',str(asm),'-o',str(obj)],env=env,check=True);objects.append(obj)
+ # QcomRpmh.o is already linked into libDitingPower.a by DitingPlatformResources;
+ # adding it here would duplicate _qcom_rpmh_* symbols at kernel link time.
  archive=out/'libDitingWifiNative.a';archive.unlink(missing_ok=True)
  subprocess.run(['xcrun','libtool','-static','-o',str(archive),str(a.ath11k),*map(str,objects)],env=env,check=True)
  (out/'build-report.json').write_text(json.dumps(dict(board='Diting SM8475 QCA6490',guest='22H374',backend='Linux v7.0.14 ath11k',archive=str(archive),firmware_from_REC=str(a.firmware),firmware_files=len(entries),firmware_bytes=pack.stat().st_size,image_verification='skipped by request',runtime_observed=False),indent=2)+'\n')

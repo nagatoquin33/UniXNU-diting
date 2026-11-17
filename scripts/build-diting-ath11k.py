@@ -20,6 +20,36 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/'scripts'))
 import diting_paths
 
+def adapt_dispatcher_timers(source):
+    """Do not retain intrusive-list successors across reentrant callbacks."""
+    old = """  u64 now = lx_now_ms();
+  struct list_head *p, *n;
+  for (p = g_timers.next; p != &g_timers; p = n) {
+    n = p->next; struct delayed_work *d = container_of(p, struct delayed_work, work.entry);
+    if (d->armed && now >= d->due && !is_running(&d->work)) {
+      d->armed = 0; list_del_init(p); ran = 1; where(2, (const void *)d->work.func);
+      g_running[g_nrunning++] = &d->work; d->work.func(&d->work); g_nrunning--; }
+  }
+"""
+    new = """  u64 now = lx_now_ms();
+  /* A callback may wait/pump recursively and remove any later timer. Never
+   * keep next across that callback: list_del_init makes removed nodes self
+   * linked. Restart selection after each callback and bound zero-delay work. */
+  for (unsigned timer_budget = 256; timer_budget; --timer_budget) {
+    struct delayed_work *d = 0; struct list_head *p;
+    for (p = g_timers.next; p != &g_timers; p = p->next) {
+      struct delayed_work *candidate = container_of(p, struct delayed_work, work.entry);
+      if (candidate->armed && now >= candidate->due && !is_running(&candidate->work)) { d = candidate; break; }
+    }
+    if (!d) break;
+    d->armed = 0; list_del_init(&d->work.entry); ran = 1; where(2, (const void *)d->work.func);
+    g_running[g_nrunning++] = &d->work; d->work.func(&d->work); g_nrunning--;
+  }
+"""
+    if source.count(old) != 1:
+        raise RuntimeError('shared dispatcher timer ABI differs')
+    return source.replace(old, new)
+
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
@@ -65,71 +95,67 @@ def main():
         const char *prefix = (ab->qmi.target.chip_id & 0x10) ? "bdwlang" : "bdwlan";
         if (id == 0xff) snprintf(diting_bdf, sizeof diting_bdf, "%s.elf", prefix);
         else if (id < 0xff) snprintf(diting_bdf, sizeof diting_bdf, "%s.e%02x", prefix, id);
-        else snprintf(diting_bdf, sizeof diting_bdf, "bdwlan%02x.e%02x", (id >> 8) & 255, id & 255);
+        else snprintf(diting_bdf, sizeof diting_bdf, "%s%02x.e%02x", prefix, (id >> 8) & 255, id & 255);
         name = diting_bdf;
         ath11k_info(ab, "Diting: actual QMI board firmware %s\n", name);
     }
 """ + needle
     if core.count(needle) != 1: raise RuntimeError('ath11k BDF request ABI differs')
     (gen / 'core.c').unlink(); (gen / 'core.c').write_text(core.replace(needle, replacement))
-    # A radio crash is terminal for this dispatcher incarnation. Do not send
-    # new WMI packets or repeatedly schedule Linux recovery inside the work
-    # item that is still bringing the MAC up; the board retains DMA/reset.
-    mhi_source = (source / 'mhi.c').read_text()
-    needle = '\tswitch (cb) {\n\tcase MHI_CB_SYS_ERROR:'
-    replacement = '''    if (cb == MHI_CB_SYS_ERROR || cb == MHI_CB_EE_RDDM || cb == MHI_CB_FATAL_ERROR) {
-        extern void diting_ath11k_mhi_failed(struct mhi_controller *, int);
-        diting_ath11k_mhi_failed(mhi_cntrl, cb);
-        ab_pci->mhi_pre_cb = cb;
-        return;
-    }
-''' + needle
-    if mhi_source.count(needle) != 1: raise RuntimeError('ath11k MHI status ABI differs')
-    (gen / 'mhi.c').unlink(); (gen / 'mhi.c').write_text(mhi_source.replace(needle, replacement))
+    # WMI's wait condition sends and transfers ownership of an skb on
+    # success. The shared shim's generic wait evaluates that condition
+    # again on exit, sending the same skb twice and replacing success with
+    # -EAGAIN when the single HTC credit has already been consumed (g274).
+    # Use its side-effect-safe wait for both WMI credit/descriptor paths.
     wmi = (source / 'wmi.c').read_text()
-    needle = '\tstruct ath11k_base *ab = wmi_ab->ab;\n\n\tmight_sleep();'
-    replacement = '''\tstruct ath11k_base *ab = wmi_ab->ab;
-    extern void diting_ath11k_wmi_submitted(u32);
-    if (test_bit(ATH11K_FLAG_CRASH_FLUSH, &ab->dev_flags)) return -ESHUTDOWN;
-    diting_ath11k_wmi_submitted(cmd_id);
-
-\tmight_sleep();'''
-    if wmi.count(needle) != 1: raise RuntimeError('ath11k WMI send ABI differs')
-    (gen / 'wmi.c').unlink(); (gen / 'wmi.c').write_text(wmi.replace(needle, replacement))
-    # Diting's mobile HSP firmware has no MBSSID AP context for a station.
-    # Linux's generic fallback labels even a station NON_MBSSID_AP; don't
-    # send AP-role flags on this STA-only board integration.
-    mac_source = (source / 'mac.c').read_text()
-    needle = '\tparams->mbssid_tx_vdev_id = 0;\n\n\tif (!test_bit('
-    replacement = '''\tparams->mbssid_tx_vdev_id = 0;
-    if (arvif->vif->type == NL80211_IFTYPE_STATION) goto diting_station_chains;
-
-\tif (!test_bit('''
-    if mac_source.count(needle) != 1: raise RuntimeError('ath11k vdev parameters differ')
-    mac_source = mac_source.replace(needle, replacement)
-    needle = '\tif (pdev->cap.supported_bands & WMI_HOST_WLAN_2G_CAP) {\n\t\tparams->chains'
-    if mac_source.count(needle) != 1: raise RuntimeError('ath11k STA chain setup differs')
-    mac_source = mac_source.replace(needle, 'diting_station_chains:\n' + needle)
-    # ath12k station uses split link/vif notifications; ath11k implements
-    # their combined legacy bss_info_changed callback. Forward real changes
-    # to that implementation, including assoc/disassoc, rather than NULL or
-    # a success stub. The non-MLO vif's default link is the selected BSS.
-    marker = 'static const struct ieee80211_ops ath11k_ops = {'
-    adapter = """static void diting_ath11k_vif_cfg_changed(struct ieee80211_hw *hw,
+    if wmi.count('wait_event_timeout(') != 2:
+        raise RuntimeError('ath11k WMI command wait ABI differs')
+    (gen / 'wmi.c').unlink()
+    wmi = wmi.replace('wait_event_timeout(', 'wait_event_timeout_once(')
+    trace = '\ttrace_ath11k_wmi_cmd(ab, cmd_id, skb->data, skb->len);'
+    if wmi.count(trace) != 1:
+        raise RuntimeError('ath11k WMI submission trace ABI differs')
+    wmi = 'extern void diting_ath11k_wmi_submitted(unsigned int);\n' + wmi.replace(
+        trace, trace + '\n\tditing_ath11k_wmi_submitted(cmd_id);')
+    (gen / 'wmi.c').write_text(wmi)
+    # The cooperative shim cannot safely reenter full Linux firmware reset
+    # work inside the failing MHI callback. Preserve the first fault and let
+    # the board stop this optional worker with DMA storage retained.
+    mhi_driver = (source / 'mhi.c').read_text()
+    status = '\tstruct ath11k_pci *ab_pci = ath11k_pci_priv(ab);\n\n\tath11k_dbg(ab, ATH11K_DBG_BOOT, "notify status reason %s\\n",'
+    if mhi_driver.count(status) != 1:
+        raise RuntimeError('ath11k MHI status callback ABI differs')
+    mhi_driver = 'struct mhi_controller;\nextern void diting_ath11k_mhi_failed(struct mhi_controller *, int);\n' + mhi_driver.replace(
+        status, '\tstruct ath11k_pci *ab_pci = ath11k_pci_priv(ab);\n\n'
+        '\tif (cb == MHI_CB_SYS_ERROR || cb == MHI_CB_FATAL_ERROR || cb == MHI_CB_EE_RDDM) {\n'
+        '\t\tditing_ath11k_mhi_failed(mhi_cntrl, cb);\n\t\treturn;\n\t}\n\n'
+        '\tath11k_dbg(ab, ATH11K_DBG_BOOT, "notify status reason %s\\n",')
+    (gen / 'mhi.c').unlink()
+    (gen / 'mhi.c').write_text(mhi_driver)
+    # The shared station uses mac80211's split link/vif notifications.
+    # ath11k still implements the unified bss_info_changed callback.
+    # Route both notifications to that real implementation; a NULL split
+    # callback caused g277's instruction-fetch panic on the first join.
+    ath_mac = (source / 'mac.c').read_text()
+    ops = 'static const struct ieee80211_ops ath11k_ops = {'
+    bridge = '''static void diting_ath11k_vif_cfg_changed(struct ieee80211_hw *hw,
         struct ieee80211_vif *vif, u64 changed)
 {
     ath11k_mac_op_bss_info_changed(hw, vif, &vif->bss_conf, changed);
 }
 
-"""
-    if mac_source.count(marker) != 1: raise RuntimeError('ath11k operations table differs')
-    mac_source = mac_source.replace(marker, adapter + marker)
-    needle = '\t.bss_info_changed               = ath11k_mac_op_bss_info_changed,'
-    if mac_source.count(needle) != 1: raise RuntimeError('ath11k combined BSS callback differs')
-    mac_source = mac_source.replace(needle, needle +
-        '\n\t.link_info_changed              = ath11k_mac_op_bss_info_changed,' +
-        '\n\t.vif_cfg_changed                = diting_ath11k_vif_cfg_changed,')
-    (gen / 'mac.c').unlink(); (gen / 'mac.c').write_text(mac_source)
+'''
+    if ath_mac.count(ops) != 1:
+        raise RuntimeError('ath11k mac80211 operations ABI differs')
+    ath_mac = ath_mac.replace(ops, bridge + ops)
+    ath_mac, changes = re.subn(
+        r'(\t\.bss_info_changed\s*= ath11k_mac_op_bss_info_changed,)',
+        r'\1\n\t.link_info_changed = ath11k_mac_op_bss_info_changed,\n'
+        r'\t.vif_cfg_changed = diting_ath11k_vif_cfg_changed,', ath_mac)
+    if changes != 1:
+        raise RuntimeError('ath11k BSS callback ABI differs')
+    (gen / 'mac.c').unlink()
+    (gen / 'mac.c').write_text(ath_mac)
     mac = (shared / 'src/nw_mac80211.c').read_text()
     mac += r"""
 /* Linux ath11k still uses these mac80211 APIs; the shared station has one
@@ -188,13 +214,41 @@ void ieee80211_queue_work(struct ieee80211_hw *hw, struct work_struct *work) { i
     begin = sta.index('static void make_nonce(u8 *out) {')
     end = sta.index('static void derive_ptk(void)', begin)
     sta = sta[:begin] + 'extern void DitingWifiRandom(void *, size_t);\nstatic void make_nonce(u8 *out) { DitingWifiRandom(out, 32); }\n' + sta[end:]
+    # Darwin must see a real link-down for an explicit leave and for a
+    # replacement join, including when down/up occurs within one daemon tick.
+    join = 'static void start_connect(void) {\n  if (C.state != NW_STA_IDLE && C.state != NW_STA_SCANNING) return;'
+    leave = 'else if (kind == REQ_DISCONNECT && C.state >= NW_STA_AUTH) { teardown(0, 0); C.state = NW_STA_IDLE; }'
+    if sta.count(join) != 1 or sta.count(leave) != 1:
+        raise RuntimeError('shared station transition ABI differs')
+    sta = sta.replace(join, '''static void start_connect(void) {
+  if (C.state == NW_STA_UP && C.ssid_len == g_req.ssid_len &&
+      !memcmp(C.ssid, g_req.ssid, C.ssid_len) &&
+      (!g_req.has_bssid || !memcmp(C.ap.bssid, g_req.bssid, 6))) return;
+  if (C.state >= NW_STA_AUTH) {
+    lx_cancel_delayed(&g_timer);
+    teardown(C.state == NW_STA_UP, -1);
+    C.state = NW_STA_IDLE;
+  }
+  if (C.state != NW_STA_IDLE && C.state != NW_STA_SCANNING) return;''')
+    sta = sta.replace(leave, '''else if (kind == REQ_DISCONNECT && C.state >= NW_STA_AUTH) {
+      lx_cancel_delayed(&g_timer); teardown(C.state == NW_STA_UP, -1); C.state = NW_STA_IDLE;
+    }''')
+    # ath11k caches the management rate after association, then reapplies it
+    # when the next vdev starts (mac.c: ath11k_start_vdev). Rejoining from
+    # 2.4 to 5 GHz must not carry a CCK rate into that start/authentication.
+    # Use the same AP basic-rate selection as the shared station's later
+    # association notification, but publish it before assign_vif_chanctx.
+    rates_begin = '    const u8 *e = find_ie(C.ap.ie, C.ap.ie_len, WLAN_EID_SUPP_RATES);'
+    rates_end = '    g_vif->bss_conf.assoc_capability = C.ap.caps;'
+    assign = '  r = g_ops->assign_vif_chanctx(g_hw, g_vif, &g_vif->bss_conf, C.ctx);'
+    if sta.count(rates_begin) != 1 or sta.count(rates_end) != 1 or sta.count(assign) != 1:
+        raise RuntimeError('shared station basic-rate/channel-start ABI differs')
+    rate_selection = sta[sta.index(rates_begin):sta.index(rates_end)]
+    sta = sta.replace(assign, rate_selection +
+        '  lx_log(6, "diting station: pre-start band=%u basic_rates=0x%x", band, g_vif->bss_conf.basic_rates);\n'
+        '  g_ops->link_info_changed(g_hw, g_vif, &g_vif->bss_conf, BSS_CHANGED_BASIC_RATES);\n' + assign)
     (out / 'nw_sta_diting.c').write_text(sta)
-    # Preserve the user's no-checksum policy in the shared loader too.
-    runtime = (shared / 'shim/src/lx_rt.c').read_text()
-    begin = runtime.index('  static int settled;\n', runtime.index('int lx_request_firmware('))
-    end = runtime.index('  *fw = f;', begin)
-    runtime = runtime[:begin] + runtime[end:]
-    (out / 'lx_rt_diting.c').write_text(runtime)
+    (out / 'lx_rt_diting.c').write_text(adapt_dispatcher_timers((shared / 'shim/src/lx_rt.c').read_text()))
     common_sources = ['src/nw_crypto.c', 'src/nw_mac80211.c', 'src/nw_net.c', 'src/nw_pci.c',
         'src/nw_qrtr.c', 'src/nw_qrtr_mhi.c', 'src/nw_sta.c', 'shim/src/lx_rt.c', 'shim/src/mhi_hook.c']
     replacements = {'src/nw_sta.c': out / 'nw_sta_diting.c',
