@@ -10692,7 +10692,7 @@ index e050e53..27157d6 100644
  SECURITY_READ_ONLY_LATE(unsigned long)   real_phys_size;
  SECURITY_READ_ONLY_LATE(vm_map_address_t) physmap_base = (vm_map_address_t)0;
  SECURITY_READ_ONLY_LATE(vm_map_address_t) physmap_end = (vm_map_address_t)0;
-@@ -366,7 +370,90 @@ typedef struct {
+@@ -366,7 +370,143 @@ typedef struct {
  	vm_size_t len;
  } ptov_table_entry;
  
@@ -10733,6 +10733,57 @@ index e050e53..27157d6 100644
 +    panic("Diting RAM: invalid dense page index %u", index);
 +}
 +static void
++diting_ram_static_banks(boot_args *args)
++{
++    DTEntry chosen;
++    unsigned length = 0;
++    const void *property = NULL;
++    uint64_t total = args->memSize;
++
++    if (SecureDTLookupEntry(NULL, "/chosen", &chosen) != kSuccess ||
++        SecureDTGetProperty(chosen, "diting-allocatable-ram", &property, &length) != kSuccess ||
++        !property || !length || (length % 16) != 0 || length / 16 > DITING_RAM_RANGE_MAX - 1) {
++        return;
++    }
++    const volatile uint8_t *source = (const volatile uint8_t *)property;
++    for (unsigned i = 0; i < length / 16; i++) {
++        if (diting_ram_range_count + 2 > DITING_RAM_RANGE_MAX) return;
++        uint64_t start, size;
++        for (unsigned b = 0; b < 8; b++) ((uint8_t *)&start)[b] = source[i * 16 + b];
++        for (unsigned b = 0; b < 8; b++) ((uint8_t *)&size)[b] = source[i * 16 + 8 + b];
++        if (!size || ((start | size) & PAGE_MASK) || start > UINT64_MAX - size ||
++            size > (12ULL << 30) || total > (12ULL << 30) - size) continue;
++        /* Keep the loader window as range 0; append the bank around it when it overlaps. */
++        uint64_t bank_end = start + size;
++        uint64_t win_start = args->physBase, win_end = args->physBase + args->memSize;
++        if (start < win_end && win_start < bank_end) {
++            if (start < win_start) {
++                uint64_t chunk = win_start - start;
++                if ((chunk & PAGE_MASK) || chunk > (12ULL << 30) - total) continue;
++                diting_ram_ranges[diting_ram_range_count] =
++                    (struct diting_ram_range){start, win_start, total >> PAGE_SHIFT};
++                total += chunk;
++                diting_ram_range_count++;
++            }
++            if (bank_end > win_end) {
++                uint64_t chunk = bank_end - win_end;
++                if ((chunk & PAGE_MASK) || chunk > (12ULL << 30) - total) continue;
++                diting_ram_ranges[diting_ram_range_count] =
++                    (struct diting_ram_range){win_end, bank_end, total >> PAGE_SHIFT};
++                total += chunk;
++                diting_ram_range_count++;
++            }
++            continue;
++        }
++        diting_ram_ranges[diting_ram_range_count] =
++            (struct diting_ram_range){start, bank_end, total >> PAGE_SHIFT};
++        total += size;
++        diting_ram_range_count++;
++    }
++    diting_ram_bytes = total;
++}
++
+++static void
 +diting_ram_init(boot_args *args)
 +{
 +    DTEntry chosen;
@@ -10742,6 +10793,7 @@ index e050e53..27157d6 100644
 +    diting_ram_ranges[0] = (struct diting_ram_range){args->physBase, args->physBase + args->memSize, 0};
 +    diting_ram_range_count = 1;
 +    diting_ram_bytes = args->memSize;
++    diting_ram_static_banks(args);
 +    if (SecureDTLookupEntry(NULL, "/chosen", &chosen) != kSuccess ||
 +        SecureDTGetProperty(chosen, "darwinboot-memory-ranges", &property, &length) != kSuccess ||
 +        !property || length != sizeof(wire)) return;
@@ -10753,6 +10805,7 @@ index e050e53..27157d6 100644
 +        ((uint8_t *)wire)[i] = source[i];
 +    if (wire[0] != 1 || !wire[1] || wire[1] > DITING_RAM_RANGE_MAX || wire[3] ||
 +        wire[4] != args->physBase || wire[5] != args->memSize) return;
++    diting_ram_bytes = args->memSize;
 +    uint64_t total = args->memSize;
 +    for (unsigned i = 1; i < wire[1]; i++) {
 +        uint64_t start = wire[4 + i * 2], size = wire[5 + i * 2];
