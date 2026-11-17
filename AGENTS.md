@@ -1815,6 +1815,6 @@ work is the boot itself, not the inputs.
   - kernel sha：build `6553048f…`、RPMh `523f81b5…`、Wi-Fi `bd69c8b7…`、电池 `8d057e5c…`；library-only prelink 候选 `c3dfa0f5…`（9 个 library-only 组件）；kernel_args 恢复 addon18 的 48-token 行（994 B）；Turnip dylib 17,882,280 B sha `ccc122f6…`。
   - loader 扫描 199 镜像：116 PASS / 75 FAIL / 8 ERROR；`addon23`–`36` 因早于 `e8e82d6` GpuAddon 槽预留 FAIL，`addon45`–`47` 因 initrd 无 RAMDisk 槽 FAIL；`addon18`/`addon48`/B1 PASS。
   - live-DT TCS 映射：活动槽 0–2，触控 TCS0 / Wi-Fi+ADSP 共享 TCS1 / GPU TCS2（自 TCS3 迁入）；`diting_wifi_ipa` 缺省 `0` 并推迟 `smpe3` 轨；Xiaomi 电池属性 ID 在 12 后 +1，去 `*10` 温度缩放。
-- **结论**：上述 6 项均为 `device-unverified`（host-build/静态校验通过，无任何真机日志）；`port/zizhan-sync` 未合入 `dev`/`main`。
-- **下一步**：先在 `port/zizhan-sync` 构建一张候选 boot 镜像并跑通三张主机门禁，再按「单变量、RAM-only `fastboot boot`」逐段上机（TCS0–4 探针 → 6 轨 + `diting_wifi_ipa=1` → 电池/GLINK → GPU fps）。
+- **结论**：上述 6 项均为 `device-unverified`（host-build/静态校验通过，无任何真机日志）；`port/zizhan-sync` 已合入 `dev`（merge commit `7144282`），未合入 `main`。
+- **下一步**：先在 `dev` 上构建一张候选 boot 镜像并跑通三张主机门禁，再按「单变量、RAM-only `fastboot boot`」逐段上机（TCS0–4 探针 → 6 轨 + `diting_wifi_ipa=1` → 电池/GLINK → GPU fps）。
 - **限制**：userland dylib（`libditing-ui18` / Turnip 用户态）构建为 macOS-only（`xcrun --sdk iphoneos`），本机 host 无法验证。

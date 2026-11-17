@@ -13,7 +13,7 @@
 | core 钉版 | `121ea7f`（条件性 build-verified；`xnu-ci-core` 仍保留 `0ce9779`） |
 | OS / userdata | Diting 布局：`/sbin/launchd` = `/diting/init` sha256 `95cb7341…`；`libditing-ui18.dylib` 174,976 B，含 `/dev/diting-touch`；卷 UUID `B07DF049…`；Data 窗口 8 GiB（UUID `337CF716…`）；sparse 恢复 `userdata-osditing-1109.sparse.img`（19,411,252,824 B） |
 | 历史候选（11-16/17 实测结论） | `addon18`（`6c026c49…`）能进桌面；`addon19`（`102fd293…`，不可复现脏树构建）到 smpe3 投票；`addon35`–`48` 均未过启动：缺失 `GpuAddon` 槽（`addon26`–`35`）或 `initrd`/`RAMDisk` 槽不匹配（`addon45`–`47`）在 loader 报 `Compromised Data`，`addon39`/`40` 符号化落点 `_cfil_data_filter+0x13c` 早崩，`addon42`/`44` 早崩，`addon48` 无 ramoops |
-| 分支状态 | `diting-ci`：`port/zizhan-sync`（自 `dev` `6e1933e`，含 6 个 host-verified 提交 `890532b`/`18870af`/`0bd067f`/`00daa2a`/`c46603f`/`48c6b80`，未合入 `dev`/`main`）；`main`（稳定，仅文档与已验证配置）、`dev`（集成，含 `e8e82d6`..`91dbe4f` 共 6 项 `device-unverified` 改动）。核心 fork：`main` @ `377f0ff`、`dev` @ `121ea7f` |
+| 分支状态 | `diting-ci`：`dev`（含 6 个 host-verified 提交 `890532b`/`18870af`/`0bd067f`/`00daa2a`/`c46603f`/`48c6b80`，merge `7144282`；feature branch 已删除；未合入 `main`）；`main`（稳定，仅文档与已验证配置）、`dev`（集成，含 `e8e82d6`..`91dbe4f` 共 6 项 `device-unverified` 改动）。核心 fork：`main` @ `377f0ff`、`dev` @ `121ea7f` |
 | 设备可见性 | **手机未连接**；关机/重启需先确认设备连接与在场，恢复见 [`RECOVERY.md`](RECOVERY.md) |
 | 代码备份 | `/home/nagatoquin/unixnu/backups/diting-ci-before-rpmh-slot-20261115` |
 
@@ -53,7 +53,7 @@
 
 | 阻塞 | 现象 | 根因与社区解法 |
 | --- | --- | --- |
-| 重编内核早崩 | `addon19` 之后重编内核（`addon35`/`39`/`40`/`42`/`44`）均早崩；`addon39`/`40` 符号化落点 `_cfil_data_filter+0x13c` | **主机端已对齐**（`port/zizhan-sync` `890532b`）：`build-xnu-ipados18.sh` 恢复 `patch --forward` 并剥离 `0001` 以外编号补丁；`build-release-image-linux.py` 默认 `--prelink-kernel`（un-prelinked 输入、9 个 library-only 组件）；`CONFIG_XNU_PRELINKED_IOSURFACE=n`；kernel sha `6553048f…`、prelink 候选 `c3dfa0f5…`。真机待验 |
+| 重编内核早崩 | `addon19` 之后重编内核（`addon35`/`39`/`40`/`42`/`44`）均早崩；`addon39`/`40` 符号化落点 `_cfil_data_filter+0x13c` | **主机端已对齐**（`dev` merge `7144282`，`890532b`）：`build-xnu-ipados18.sh` 恢复 `patch --forward` 并剥离 `0001` 以外编号补丁；`build-release-image-linux.py` 默认 `--prelink-kernel`（un-prelinked 输入、9 个 library-only 组件）；`CONFIG_XNU_PRELINKED_IOSURFACE=n`；kernel sha `6553048f…`、prelink 候选 `c3dfa0f5…`。真机待验 |
 | Loader `Compromised Data` | `addon45`–`48` 在菜单被拒 | **主机端已扩检**（`18870af`）：`check-loader-adt-contract.py` 扩为完整 DarwinBoot 契约（TrustCache/RootPolicies、16-byte 零槽、packed ramdisk、official/fork `/chosen`、boot-arg 长度/ASCII）。199 镜像扫描：116 PASS / 75 FAIL / 8 ERROR；`addon23`–`36` 因早于 `e8e82d6` 的 GpuAddon 槽预留而 FAIL，`addon45`–`47` 因 initrd 无 RAMDisk 槽 FAIL；`addon18`/`addon48`/B1 PASS |
 | Wi-Fi | `addon18c` 首笔 `smpe2` 超时；`addon19` 六轨 `physical ready` 后 `smpe3` 停在 `triggered, polling` | **主机端已回灌**（`0bd067f`/`00daa2a`）：整包对齐 `UniXNU-zizhan @ 034a0b0` `PongWifi`，恢复 `wait_event_timeout_once`/`adapt_dispatcher_timers`/重连与 basic-rate/`nw_wifi_rssi_limits`/`scan_result24`/`bdwlang` BDF 前缀/锁外通知队列，撤掉 `station_identity`、6 GHz 跳过、staged/forceFlush、合成 MAC。live-DT TCS 映射：触控 TCS0、Wi-Fi/ADSP 共享 TCS1、GPU TCS2；Goodix `io_supply_on()` 经 `diting_rpmh_vote()`。`diting_wifi_ipa` 缺省 `0` 并推迟 `smpe3` 轨。kernel sha `bd69c8b7…`，ath11k 独立编译净。真机待验 |
 | ADSP / 电量 | ADSP stage 7 `0x30030=7` 超时（-60）；`DitingBattery` 缺 `AppleSmartBattery` | **主机端已对齐**（`c46603f`）：发布 `AppleSmartBattery`（含 `MaximumCapacityPercent`/`Serial`/`BatteryData`），Xiaomi 属性 ID 在 12 后 +1 偏移，去掉 `*10` 温度缩放。kernel sha `8d057e5c…`。真机待验；健康度转圈在 `zizhan` 亦未闭环，不伪造状态 |
@@ -65,7 +65,7 @@
 ## 下一轮工作重点（社区优先，主机验证后再上机）
 
 1. **构建候选镜像（手机未连接时可完成）**：
-   - 在 `port/zizhan-sync` 分支用现有配方产出一张候选 boot 镜像（kernel `bd69c8b7…`/`8d057e5c…` 叠加后的新基线 + addon18 args + library-only prelink `c3dfa0f5…`），先跑 `check-loader-adt-contract.py`、`check-storage-bindings.py` 与 `porting-record.py check` 三张主机门禁。
+   - 在 `dev` 分支用现有配方产出一张候选 boot 镜像（kernel `bd69c8b7…`/`8d057e5c…` 叠加后的新基线 + addon18 args + library-only prelink `c3dfa0f5…`），先跑 `check-loader-adt-contract.py`、`check-storage-bindings.py` 与 `porting-record.py check` 三张主机门禁。
 2. **单变量上机验收（需设备连接与用户在场；host-only 改动一律先验证再上机）**：
    - 每轮只改一个变量、只做 RAM-only `fastboot boot`，逐段取 `ramoops` 与 `Advanced Logger` 原文；写分区前必须单独授权。建议顺序：
      - TCS0–TCS4 探针：确认活动槽 0–2、共享 TCS1、GPU TCS2 的实际投票与 `via=` 判据；
