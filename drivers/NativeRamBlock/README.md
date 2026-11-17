@@ -15,7 +15,7 @@ RAM 后端的 IOKit 块设备：为无 Apple 存储控制器的移植提供 `/pr
 
 - `SparseDisk.h`、`PersistOverlay.h`、`DirectDisk.h` 分别对应稀疏种子、持久 overlay 与直通磁盘。有 `Test/` 目录。
 
-构建、接口与组件目录见 [UniXNU 组件目录](https://unixnu.com/reference/components)，板级输入与编译入口在 [UniXNU-diting](https://github.com/Chengdong-Yu/UniXNU-pong)。
+构建、接口与组件目录见 [UniXNU 组件目录](https://unixnu.com/reference/components)，板级输入与编译入口在 [UniXNU-diting](https://github.com/nagatoquin33/UniXNU-diting)。
 
 ## 实现细节
 

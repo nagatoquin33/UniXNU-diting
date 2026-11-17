@@ -15,7 +15,7 @@ Diting 专属实现。
 
 - 是软件截止时间，不是硬件看门狗，也不绕过 panic。
 
-构建、接口与组件目录见 [UniXNU 组件目录](https://unixnu.com/reference/components)，板级输入与编译入口在 [UniXNU-diting](https://github.com/Chengdong-Yu/UniXNU-pong)。
+构建、接口与组件目录见 [UniXNU 组件目录](https://unixnu.com/reference/components)，板级输入与编译入口在 [UniXNU-diting](https://github.com/nagatoquin33/UniXNU-diting)。
 
 ## 实现细节
 

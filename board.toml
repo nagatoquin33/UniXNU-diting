@@ -71,7 +71,7 @@ roots = ["com.apple.kec.corecrypto", "com.apple.kec.pthread", "com.apple.filesys
 model = "iPhone17,1"
 target-type = "J171"
 target-sub-type = "J171AP"
-"diting,physical-model" = "Nothing Phone (2)"
+"diting,physical-model" = "Xiaomi Redmi K50 Ultra"
 
 [adt.root.strings]
 compatible = ["J171AP", "iPhone17,1", "qcom,sm8475"]

@@ -127,7 +127,7 @@ def main():
         'system_volume_auth_blob_sha256': hashlib.sha256(auth_blob).hexdigest() if auth_blob is not None and not args.skip_image_verification else None,
         'kernel_sha384': hashlib.sha384(kernel).hexdigest() if not args.skip_image_verification else None,
         'loader_sha384': hashlib.sha384((payload / 'DarwinBoot24.efi').read_bytes()).hexdigest() if not args.skip_image_verification else None,
-        'board': 'Nothing Phone (2) / Diting / SM8475',
+        'board': 'Diting (Redmi K50 Ultra) / SM8475',
         'boot_args': boot_args,
         'root_volume_uuid': args.root_match_volume_uuid,
         'requested_memory_window_bytes': args.window_size,

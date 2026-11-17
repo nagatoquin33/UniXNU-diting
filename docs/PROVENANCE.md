@@ -20,6 +20,12 @@
 - **驱动实现本身**：`drivers/` 的 `pong-*` 代码是 vendored 参考实现，保留原始许可证与来源；代码存在不等于
   本机功能验证。
 
+## 构建来源与机器身份
+
+- SM8475 seed 现由本仓库 `migration/format2/soc-seed` 提供（来源 `Chengdong-Yu/UniXNU-pong @ f62243e`，见 `migration/format2/soc-commit.json`）；构建 feed 不再访问 Pong 仓库。
+- `drivers/*` 中指向 Pong `migration/ipados18/` 的 `services*`/`upstream-*` 链接是历史来源，保留但不算 Diting 证据。
+- 机器身份字段（ADT `diting,physical-model`、组件 `repository`、脚本 `board`/`device` 元数据）写 Diting / Redmi K50 Ultra，不写 Nothing Phone (2)。
+
 ## 如何读 `porting.toml` 的 evidence
 
 每条 `evidence` 同时带 `kind` 与 `reported_kind`：

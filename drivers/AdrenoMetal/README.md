@@ -15,7 +15,7 @@ Metal API 前端：通过 `MTLAddDevice` 发布 Metal 设备，用 metal2vulkan 
 
 - 首次运行着色器编译较慢，没有完整的预编译 UI 包。
 
-构建、接口与组件目录见 [UniXNU 组件目录](https://unixnu.com/reference/components)，板级输入与编译入口在 [UniXNU-diting](https://github.com/Chengdong-Yu/UniXNU-pong)。
+构建、接口与组件目录见 [UniXNU 组件目录](https://unixnu.com/reference/components)，板级输入与编译入口在 [UniXNU-diting](https://github.com/nagatoquin33/UniXNU-diting)。
 
 ## 实现细节
 

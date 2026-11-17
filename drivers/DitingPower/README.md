@@ -19,7 +19,7 @@ Diting 专属实现。协议与服务结构参照 UniXNU-sheng 的 Qualcomm 实�
 - `libDitingPower.a` 由 `scripts/build-diting-power-native.py` 生成，由主构建 force-load；`ArmDTPlatform` 在 CPU nubs 发布后调用电源入口。
 - 背光细节另见 `README.backlight.md`。固件（`adsp.mbn`）不进 Git，用 `refresh_runtime --power-firmware DIR` 或 `diting_adsp-fw=/abs/dir` 提供。
 
-构建、接口与组件目录见 [UniXNU 组件目录](https://unixnu.com/reference/components)，板级输入与编译入口在 [UniXNU-diting](https://github.com/Chengdong-Yu/UniXNU-pong)。
+构建、接口与组件目录见 [UniXNU 组件目录](https://unixnu.com/reference/components)，板级输入与编译入口在 [UniXNU-diting](https://github.com/nagatoquin33/UniXNU-diting)。
 
 ## 已接入的代码
 

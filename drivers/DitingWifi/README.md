@@ -18,7 +18,7 @@ Diting 专属实现；`ath11k/` 是 Linux v7.0.14 ath11k 的 PCI/MHI/QMI 部分�
 - `proprietary-files.txt` 只是清单，固件本身不入库。
 - 只有 station 就绪且拿到真实硬件 MAC 才发布网络接口。
 
-构建、接口与组件目录见 [UniXNU 组件目录](https://unixnu.com/reference/components)，板级输入与编译入口在 [UniXNU-diting](https://github.com/Chengdong-Yu/UniXNU-pong)。
+构建、接口与组件目录见 [UniXNU 组件目录](https://unixnu.com/reference/components)，板级输入与编译入口在 [UniXNU-diting](https://github.com/nagatoquin33/UniXNU-diting)。
 
 ## 接入
 

@@ -28,7 +28,7 @@ def main():
     files.append((a.adsp.resolve(),'power/adsp.mbn','Runtime packaging: SM8475 PAS1 ADSP; not embedded in kernel archive'))
     for source,_,_ in files:
         if not source.is_file() or source.is_symlink():raise RuntimeError('Missing local firmware: '+str(source))
-    inventory={'device':'Nothing Phone (2) / Diting / SM8475','scope':'Current Darwin24 build and runtime firmware inputs',
+    inventory={'device':'Diting (Redmi K50 Ultra) / SM8475','scope':'Current Darwin24 build and runtime firmware inputs',
         'files':[{'path':name,'bytes':source.stat().st_size,'use':use} for source,name,use in files],
         'apple_content':False,'partition_images':False,'credentials':False,'hashes':False,
         'runtime_qualified':False}

@@ -126,7 +126,7 @@ def ensure_gpu_addon_slot(blob, present):
 
 
 MANIFEST_FORMAT = 'pong-development-boot-manifest-v1'
-BOARD = 'Nothing Phone (2) / Diting / SM8475'
+BOARD = 'Diting (Redmi K50 Ultra) / SM8475'
 
 
 def sha256(path):

@@ -18,7 +18,7 @@ Diting 专属实现，上游没有对应组件（`UniXNU/ShengUfs` 是 SM8550 �
 - `RootLayout.h` 决定只读根卷布局；`SmmuTakeover.h` 与 `DitingPower`、`DitingUsb`、`DitingWifi` 共用。
 - `NativeUfs.cpp`、`DitingUfsTransport.cpp` include `../DitingProbe.h`，该头由 UniXNU-diting 的 `drivers/` 提供，独立 clone 时缺失。
 
-构建、接口与组件目录见 [UniXNU 组件目录](https://unixnu.com/reference/components)，板级输入与编译入口在 [UniXNU-diting](https://github.com/Chengdong-Yu/UniXNU-pong)。
+构建、接口与组件目录见 [UniXNU 组件目录](https://unixnu.com/reference/components)，板级输入与编译入口在 [UniXNU-diting](https://github.com/nagatoquin33/UniXNU-diting)。
 
 ## 实现细节
 

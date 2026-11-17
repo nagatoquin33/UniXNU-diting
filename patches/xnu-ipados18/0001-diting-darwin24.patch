@@ -12729,7 +12729,7 @@ index 0000000..0d7d130
 +#ifndef _PEXPERT_ARM64_DITING_H
 +#define _PEXPERT_ARM64_DITING_H
 +
-+// Nothing Phone (2), SM8475: firmware PSCI and the native GICv3 CPU provider.
++// Diting (Redmi K50 Ultra), SM8475: firmware PSCI and the native GICv3 CPU provider.
 +#define DITING 1
 +#define GENERIC_PSCI_SMP 1
 +#define NO_MONITOR 1

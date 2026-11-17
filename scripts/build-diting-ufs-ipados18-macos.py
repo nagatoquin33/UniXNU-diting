@@ -79,7 +79,7 @@ def main():
         'storage_commands': ['NOP', 'READ ATTRIBUTE', 'START STOP ACTIVE', 'TEST UNIT READY', 'READ CAPACITY', 'READ(10)', 'WRITE(10) FUA', 'SYNCHRONIZE CACHE(10)'],
         'smmu_writes': 'exclusive UFS SID 0xe0 only after queue stop',
         'optional_probes_default': 'off',
-        'board': 'Nothing Phone (2) Diting / SM8475',
+        'board': 'Diting (Redmi K50 Ultra) / SM8475',
         'ufs_hc': '0x01d84000/0x3000', 'gcc_ufs_page': '0x00187000/0x1000',
         'stream_id': '0xe0', 'hardware_tested': False,
         'smmu_owned_context_banks': 78, 'smmu_owned_match_groups': 120,

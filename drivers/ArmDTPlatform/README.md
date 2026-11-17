@@ -4,7 +4,7 @@
 
 ## 适配硬件
 
-- 任何以 Apple 格式设备树启动的 AArch64 平台；在 UniXNU-diting 中用于 Nothing Phone (2) / SM8475
+- 任何以 Apple 格式设备树启动的 AArch64 平台；在 UniXNU-diting 中用于 Diting (Redmi K50 Ultra) / SM8475
 - 要求设备树提供 `/chosen`（CHRP NVRAM 代理，`nvram-bank-size`、`nvram-proxy-data`）、`/cpus`、`/arm-io`、`/defaults`、`/options`
 
 ## 仓库关系
@@ -15,7 +15,7 @@
 
 - 不含板名判断，也不含 Diting 专有寄存器；板级差异由设备树与 `drivers/DitingPower` 提供。
 
-构建、接口与组件目录见 [UniXNU 组件目录](https://unixnu.com/reference/components)，板级输入与编译入口在 [UniXNU-diting](https://github.com/Chengdong-Yu/UniXNU-pong)。
+构建、接口与组件目录见 [UniXNU 组件目录](https://unixnu.com/reference/components)，板级输入与编译入口在 [UniXNU-diting](https://github.com/nagatoquin33/UniXNU-diting)。
 
 ## 实现细节
 

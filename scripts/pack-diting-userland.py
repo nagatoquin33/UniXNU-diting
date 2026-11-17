@@ -82,7 +82,7 @@ def main():
             archive.write(path, name)
             written.append({'path': name, 'bytes': path.stat().st_size})
         archive.writestr('userland-manifest.json', json.dumps({
-            'device': 'Nothing Phone (2) / Diting / SM8475',
+            'device': 'Diting (Redmi K50 Ultra) / SM8475',
             'build': result.get('build'),
             'layout': 'result.json, apply-complete.json, the OS, SystemOS and Data images',
             'files': written,

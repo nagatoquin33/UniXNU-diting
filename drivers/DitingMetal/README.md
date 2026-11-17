@@ -16,7 +16,7 @@ Diting 的 Adreno 730 Metal 前端：面向 22H374 的 `DitingAdrenoMetal.bundle
 - 22H374 上 `_MTLDevice` 是 600 字节（20G81 是 528），插件构建器要求 bridge 记录的实际长度一致才链接。
 - `bridge/` 是 Rust 侧（`NativeMetalObjects.rs`）。
 
-构建、接口与组件目录见 [UniXNU 组件目录](https://unixnu.com/reference/components)，板级输入与编译入口在 [UniXNU-diting](https://github.com/Chengdong-Yu/UniXNU-pong)。
+构建、接口与组件目录见 [UniXNU 组件目录](https://unixnu.com/reference/components)，板级输入与编译入口在 [UniXNU-diting](https://github.com/nagatoquin33/UniXNU-diting)。
 
 ## Current 22H374 integration
 

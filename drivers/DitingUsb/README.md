@@ -18,7 +18,7 @@ Pong 专属实现，接口结构参照 NativeDwc3（LICENSE 保留 `The NativeDw
 - `DitingUsbPhy.h` 的 eUSB2/repeater 序列改编自 NothingOSS 的 `phy-msn-snps-eusb2.c` 与 `repeater-i2c-eusb2.c`，是 GPL-2.0-only；其余为 BSD-2-Clause-Patent。
 - 没有 Apple FairPlay 硬件，不发布伪造的 IOUSBDeviceController 类。
 
-构建、接口与组件目录见 [UniXNU 组件目录](https://unixnu.com/reference/components)，板级输入与编译入口在 [UniXNU-diting](https://github.com/Chengdong-Yu/UniXNU-pong)。
+构建、接口与组件目录见 [UniXNU 组件目录](https://unixnu.com/reference/components)，板级输入与编译入口在 [UniXNU-diting](https://github.com/nagatoquin33/UniXNU-diting)。
 
 ## 串口
 

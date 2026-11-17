@@ -1,6 +1,6 @@
 # ArmCpu
 
-Nothing Phone (2)（Diting / Qualcomm SM8475）的 ARM CPU provider：GICv3 中断控制器与 ARM generic timer，从核由固件 PSCI 启动。
+Diting（Redmi K50 Ultra / Qualcomm SM8475）的 ARM CPU provider：GICv3 中断控制器与 ARM generic timer，从核由固件 PSCI 启动。
 
 ## 适配硬件
 
@@ -17,7 +17,7 @@ Nothing Phone (2)（Diting / Qualcomm SM8475）的 ARM CPU provider：GICv3 中�
 - 启动参数 `diting_cpu_policy`：0 关闭投票，1 负载调频，2（默认）每域保持最高的非 boost 请求。EPSS/LMh 仍负责实际电压、频率与热限。
 - 编译：`scripts/build-diting-armcpu*.py` 以 `DITING_DARWIN_MAJOR` 选择 Darwin 22 或 24 接口。
 
-构建、接口与组件目录见 [UniXNU 组件目录](https://unixnu.com/reference/components)，板级输入与编译入口在 [UniXNU-diting](https://github.com/Chengdong-Yu/UniXNU-pong)。
+构建、接口与组件目录见 [UniXNU 组件目录](https://unixnu.com/reference/components)，板级输入与编译入口在 [UniXNU-diting](https://github.com/nagatoquin33/UniXNU-diting)。
 
 ## 实现细节
 

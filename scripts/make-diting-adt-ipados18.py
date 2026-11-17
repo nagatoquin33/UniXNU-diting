@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a minimal Apple device tree for Nothing Phone (2) Diting.
+"""Build a minimal Apple device tree for Diting (Redmi K50 Ultra).
 
 The physical DRAM size is required input. Do not substitute the sum of Linux
 memory ranges or the DarwinBoot allocation window: XNU treats /chosen/dram-size
@@ -292,7 +292,7 @@ def main():
         ('compatible', b'J171AP\0iPhone17,1\0qcom,sm8475\0'),
         ('target-type', b'J171\0'),
         ('target-sub-type', b'J171AP\0'),
-        ('diting,physical-model', b'Nothing Phone (2)\0'),
+        ('diting,physical-model', b'Xiaomi Redmi K50 Ultra\0'),
         ('#address-cells', struct.pack('<I', 2)),
         ('#size-cells', struct.pack('<I', 2)),
     ], [

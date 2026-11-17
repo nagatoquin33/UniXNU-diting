@@ -16,7 +16,7 @@ Diting 专属实现，不来自 `UniXNU/Adreno740`（那是 740 的固件与寄�
 
 - `DitingAdrenoCpProfile.h` 由 NothingOSS SM8475 gen7 源码生成，是 GPL-2.0-only；其余多为 BSD-2-Clause-Patent 与 MIT，逐文件 SPDX 标注。
 
-构建、接口与组件目录见 [UniXNU 组件目录](https://unixnu.com/reference/components)，板级输入与编译入口在 [UniXNU-diting](https://github.com/Chengdong-Yu/UniXNU-pong)。
+构建、接口与组件目录见 [UniXNU 组件目录](https://unixnu.com/reference/components)，板级输入与编译入口在 [UniXNU-diting](https://github.com/nagatoquin33/UniXNU-diting)。
 
 ## Sheng activation chain / Diting20G81
 

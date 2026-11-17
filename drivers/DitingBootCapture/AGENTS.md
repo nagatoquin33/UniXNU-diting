@@ -7,7 +7,7 @@ Maintain DitingBootCapture, the Diting variant of the UniXNU `DitingBootCapture`
 ## Required reading
 
 1. Read this repository's README and the [component catalog](https://unixnu.com/reference/components).
-2. Read the [UniXNU-diting](https://github.com/Chengdong-Yu/UniXNU-pong) device repository: `board.toml`, `dts/diting.dts`, and the matching `porting.toml` areas.
+2. Read the [UniXNU-diting](https://github.com/nagatoquin33/UniXNU-diting) device repository: `board.toml`, `dts/diting.dts`, and the matching `porting.toml` areas.
 3. Read the relevant implementation and its build entry point before editing.
 4. For kernel work, read XNU sources, the selected patch series, and the [patch reference](https://unixnu.com/xnu/patch-reference).
 5. For image assembly, read the [packaging](https://unixnu.com/zh/porting/packaging) and [UEFI firmware](https://unixnu.com/porting/uefi-firmware) pages.

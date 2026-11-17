@@ -67,7 +67,7 @@ def main():
                 archive.write(source, name)
                 written.append({'path': name, 'bytes': source.stat().st_size})
         archive.writestr('manifest.json', json.dumps({
-            'device': 'Nothing Phone (2) / Diting / SM8475',
+            'device': 'Diting (Redmi K50 Ultra) / SM8475',
             'layout': 'wifi/, audio/, adreno730/, power/',
             'files': written,
             'note': 'Extracted from this phone. Do not commit the archive or its contents.',

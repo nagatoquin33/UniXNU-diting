@@ -41,10 +41,11 @@ git = "https://github.com/apple-oss-distributions/IOStorageFamily.git"
 ref = "IOStorageFamily-323"
 commit = "1b96f8f04b9dff4dc0277ac43625bf694e62c5aa"
 
-# SM8475 common hardware profile, carried in this repository at the
-# f62243e seed (provenance: migration/format2/soc-commit.json). Keep it
-# local: the former Chengdong-Yu/UniXNU-pong clone is no longer available
-# to CI, and the in-tree seed is the copy this board builds against.
+# SM8475 common hardware profile. The seed originated in
+# Chengdong-Yu/UniXNU-pong @ f62243e (provenance:
+# migration/format2/soc-commit.json) and is now carried in-tree at
+# migration/format2/soc-seed; the retired Pong clone is not a build
+# dependency.
 [[source]]
 name = "sm8475"
 kind = "soc"
