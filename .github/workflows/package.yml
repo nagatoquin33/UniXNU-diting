@@ -41,11 +41,15 @@ jobs:
           path: device
           submodules: recursive
       - name: build the diting volume
+        # Documented single-source firmware path (AGENTS.md 2026-11-12 B1):
+        # replace the vendored DarwinBoot with drivers/DarwinBoot, keep the
+        # AdvancedLogger and ditingPkg steps in one script instead of inlining
+        # them here. The script initializes the uefi-mondrian submodules,
+        # builds the venv, seeds the pinned ext deps and writes out/.
         run: |
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y -qq build-essential uuid-dev iasl nasm python3-venv mono-complete llvm lld
-          # Ubuntu ships versioned llvm tools; BootShim's Makefile calls the bare names.
           for t in llvm-objcopy llvm-objdump llvm-readelf clang clang++; do
             if ! command -v "$t" >/dev/null 2>&1; then
               src=$(ls /usr/bin/$t-* 2>/dev/null | sort -V | tail -1)
@@ -54,118 +58,11 @@ jobs:
           done
           llvm-objcopy --version | head -1
           git clone --filter=blob:none https://github.com/Emilelu/uefi-mondrian.git uefi-mondrian
-          cd uefi-mondrian
-          git checkout e06211de59325bbd086c312324bdbf40e21d1045
-          # build_uefi.py only updates submodules with -u; the packages the DSC lists must exist.
-          git submodule update --init --depth 1 Binaries Common/Mu Common/Mu_OEM_Sample Mu_Basecore Silicium-ACPI
-          # stuart setup skips a dirty submodule. The logger edit below dirties Mu_Basecore,
-          # so the nested modules (mipisyst and the rest) have to be fetched first.
-          git -C Mu_Basecore submodule update --init --depth 1 --recursive
-          # Mu's DxeMain never consumes AdvancedLoggerLib, so the DXE log buffer is never
-          # created and the Tools plugin reports "no log". Insert the library class where the
-          # DXE core links it; DxeCore keeps its own framebuffer DebugLib.
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path("Mu_Basecore/MdeModulePkg/Core/Dxe/DxeMain.inf")
-          data = path.read_bytes()
-          if b"AdvancedLoggerLib" in data:
-              print("AdvancedLoggerLib already present")
-          else:
-              nl = b"\r\n" if b"\r\n" in data else b"\n"
-              marker = b"[Guids]" + nl
-              assert marker in data, "DxeMain.inf has no [Guids] section"
-              add = b"  AdvancedLoggerLib         ## UniXNU: create the DXE Advanced Logger buffer" + nl
-              data = data.replace(marker, add + nl + marker, 1)
-              path.write_bytes(data)
-              print("AdvancedLoggerLib inserted")
-          PY
-          cp -r ../device/platform-firmware/ditingPkg Platforms/Xiaomi/ditingPkg
-          # build_uefi.py packs Resources/DTBs/<device>.dtb into the volume.
-          mkdir -p Resources/DTBs
-          cp ../device/platform-firmware/ditingPkg/FdtBlob/sm8475-xiaomi-diting.dtb Resources/DTBs/diting.dtb
-          # build_uefi.py runs mkbootimg with --ramdisk Resources/ramdisk; the volume build
-          # does not need payload contents, but the file must exist.
-          : > Resources/ramdisk
-          cp ../device/platform-firmware/diting.toml Resources/Configs/diting.toml
-          git apply ../device/platform-firmware/darwin-boot-diting.patch
-          # A failed first LocateProtocol used to stick for the life of the driver,
-          # so DarwinBoot's later DEBUG_ERROR lines never reached the buffer.
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path("Common/Mu/AdvLoggerPkg/Library/AdvancedLoggerLib/Dxe/AdvancedLoggerLib.c")
-          data = path.read_bytes()
-          nl = b"\r\n" if b"\r\n" in data else b"\n"
-          old = b"  if (!mInitialized) {" + nl + b"    mInitialized = TRUE;" + nl
-          if old not in data:
-              done = b"} else {" + nl + b"        mInitialized = TRUE;"
-              if done in data:
-                  print("logger latch already retried")
-              else:
-                  raise SystemExit("AdvancedLoggerLib.c latch site not found")
-          else:
-              data = data.replace(old, b"  if (!mInitialized) {" + nl, 1)
-              needle = (
-                  b"        Status = EFI_NOT_FOUND;" + nl
-                  + b"      }" + nl
-                  + b"    }" + nl
-              )
-              insert = (
-                  b"        Status = EFI_NOT_FOUND;" + nl
-                  + b"      } else {" + nl
-                  + b"        mInitialized = TRUE;" + nl
-                  + b"      }" + nl
-                  + b"    }" + nl
-              )
-              if needle not in data:
-                  raise SystemExit("AdvancedLoggerLib.c signature check not found")
-              path.write_bytes(data.replace(needle, insert, 1))
-              print("logger locate retries until the protocol exists")
-          boot = Path("Platforms/Xiaomi/DarwinBootPkg/Driver/DarwinBoot.c")
-          text = boot.read_bytes()
-          bnl = b"\r\n" if b"\r\n" in text else b"\n"
-          prints = [
-              b'Print (L"DARWINBOOT: unsupported inputs or exception level; firmware retained\\n");',
-              b'Print (L"DARWINBOOT: inputs validated; exiting boot services\\n");',
-              b'Print (L"DARWINBOOT: boot refused: %r; firmware retained\\n", Status);',
-          ]
-          for line in prints:
-              if line not in text:
-                  raise SystemExit("missing DarwinBoot line: " + line.decode())
-              debug = b"DEBUG ((DEBUG_ERROR, " + line[len(b"Print (L"):-2] + b"));"
-              if debug in text:
-                  continue
-              text = text.replace(line, debug + bnl + line, 1)
-          boot.write_bytes(text)
-          print("DarwinBoot Print lines mirrored to DEBUG_ERROR")
-          PY
-          python3 -m venv "$RUNNER_TEMP/uefi-venv"
-          . "$RUNNER_TEMP/uefi-venv/bin/activate"
-          python3 -m pip install --quiet --upgrade pip
-          python3 -m pip install --quiet -r pip-requirements.txt
-          # GitHub-hosted runners still get HTTP 504 for these two release assets.
-          # The device repo carries the upstream archives. Seeding extdep_state.yaml
-          # makes stuart update treat them as already resolved.
-          python3 ../device/platform-firmware/seed-ext-deps.py \
-            ../device/platform-firmware/vendor \
-            .
-          # Retry the build itself. A seeded ext_dep is not downloaded again.
-          for attempt in 1 2 3; do
-            if python3 build_uefi.py -d diting; then
-              break
-            fi
-            echo "firmware build attempt $attempt failed; retrying"
-            sleep 30
-          done
-          test -f Build/ditingPkg/RELEASE_CLANGPDB/FV/SILICIUM_UEFI.fd
-          FD="Build/ditingPkg/RELEASE_CLANGPDB/FV/SILICIUM_UEFI.fd"
-          [ -f "$FD" ] || { echo "missing firmware volume: $FD" >&2; exit 1; }
-          sha256sum "$FD"; ls -l "$FD"
-          mkdir -p "$GITHUB_WORKSPACE/out"
-          cp "$FD" "$GITHUB_WORKSPACE/out/SILICIUM_UEFI.fd"
-          # The macOS job packs the self-contained image and has no firmware tree.
-          cp BootShim/BootShim.bin "$GITHUB_WORKSPACE/out/BootShim.bin"
-          cp Resources/Scripts/mkbootimg.py "$GITHUB_WORKSPACE/out/mkbootimg.py"
-          cp Resources/Configs/diting.toml "$GITHUB_WORKSPACE/out/diting.toml"
+          git -C uefi-mondrian checkout e06211de59325bbd086c312324bdbf40e21d1045
+          bash device/scripts/linux/build-diting-fd.sh \
+            --uefi-dir uefi-mondrian \
+            --device device \
+            --out out
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
