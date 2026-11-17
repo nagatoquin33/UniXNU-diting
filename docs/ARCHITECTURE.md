@@ -25,7 +25,7 @@
 | `scripts/` | 构建与打包 | Linux 工具链、release v4 镜像、addon 打包、ADT 合约检查 |
 | `userland/` | 用户态适配 | init/launchd 包装、touch/按钮 HID、UI 兼容层 |
 | `migration/` | 历史记录 | format2 迁移与 ipados18 各轮记录（含 Pong 谱系） |
-| `docs/` | 当前文档 | STATUS、ARCHITECTURE、PROVENANCE、IMAGES、USB 日志方案 |
+| `docs/` | 当前文档 | STATUS、ARCHITECTURE、PROVENANCE、IMAGES、RECOVERY、GAP-ANALYSIS；过时文档归入 `docs/archive/` |
 | `AGENTS.md` | 工程日志/规则 | 时间序证据、哈希、阻塞、工作方法 |
 | `build-work/`（gitignored） | 本地工作区 | 镜像、ramoops 证据、验证脚本；不进入仓库 |
 | `out/`（gitignored） | 构建输出 | 内核、payload、boot、userdata 产物 |

@@ -1,3 +1,5 @@
+> 归档：2026-11-11 的 USB CDC 日志设计稿，已过时（多次实机尝试未取得 CDC console，已不作为日志通道）。当前日志通道以 ramoops、Advanced Logger 二维码和 panic QR 为准，见 [`docs/STATUS.md`](../STATUS.md) 与 [`docs/RECOVERY.md`](../RECOVERY.md)。
+
 # Diting USB 日志读取方案
 
 状态：设计稿，尚未实现 XNU USB 日志驱动。基于当前 v110 启动路径审阅；本方案不改变正在运行的手机。
