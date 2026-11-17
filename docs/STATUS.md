@@ -13,7 +13,7 @@
 | core 钉版 | `121ea7f`（条件性 build-verified；`xnu-ci-core` 仍保留 `0ce9779`） |
 | OS / userdata | Diting 布局：`/sbin/launchd` = `/diting/init` sha256 `95cb7341…`；`libditing-ui18.dylib` 174,976 B，含 `/dev/diting-touch`；卷 UUID `B07DF049…`；Data 窗口 8 GiB（UUID `337CF716…`）；sparse 恢复 `userdata-osditing-1109.sparse.img`（19,411,252,824 B） |
 | 历史候选（11-16/17 实测结论） | `addon18`（`6c026c49…`）能进桌面；`addon19`（`102fd293…`，不可复现脏树构建）到 smpe3 投票；`addon35`–`48` 均未过启动：缺失 `GpuAddon` 槽（`addon26`–`35`）或 `initrd`/`RAMDisk` 槽不匹配（`addon45`–`47`）在 loader 报 `Compromised Data`，`addon39`/`40` 符号化落点 `_cfil_data_filter+0x13c` 早崩，`addon42`/`44` 早崩，`addon48` 无 ramoops |
-| 分支状态 | `diting-ci`：`main`（稳定，仅文档与已验证配置）、`dev`（集成，含 `e8e82d6`..`91dbe4f` 共 6 项 `device-unverified` 改动）；实验 worktree 已清空。核心 fork：`main` @ `377f0ff`、`dev` @ `121ea7f` |
+| 分支状态 | `diting-ci`：`port/zizhan-sync`（自 `dev` `6e1933e`，含 6 个 host-verified 提交 `890532b`/`18870af`/`0bd067f`/`00daa2a`/`c46603f`/`48c6b80`，未合入 `dev`/`main`）；`main`（稳定，仅文档与已验证配置）、`dev`（集成，含 `e8e82d6`..`91dbe4f` 共 6 项 `device-unverified` 改动）。核心 fork：`main` @ `377f0ff`、`dev` @ `121ea7f` |
 | 设备可见性 | **手机未连接**；关机/重启需先确认设备连接与在场，恢复见 [`RECOVERY.md`](RECOVERY.md) |
 | 代码备份 | `/home/nagatoquin/unixnu/backups/diting-ci-before-rpmh-slot-20261115` |
 
@@ -53,24 +53,25 @@
 
 | 阻塞 | 现象 | 根因与社区解法 |
 | --- | --- | --- |
-| 重编内核早崩 | `addon19` 之后重编内核（`addon35`/`39`/`40`/`42`/`44`）均早崩；`addon39`/`40` 符号化落点 `_cfil_data_filter+0x13c` | `addon18` 走 `library_only_components`（37 条目，剥离 Apple kext personality），而 `addon35`–`44` 走无 `library_only` 的通用 prelink（41 条目）；且 `build-xnu-ipados18.sh` 去掉了 `patch --forward` 并堆叠 28 条 `zzzz…` 补丁。对齐 `UniXNU-zizhan` 的 `library_only_components`（9 组件）+ `patch --forward` 与干净补丁序 |
-| Loader `Compromised Data` | `addon45`–`48` 在菜单被拒（未取 `Advanced Logger` 二维码，与 `dev` 新逻辑尚待主机实测） | 用 `drivers/DarwinBoot/Test/` 与真实 ADT/payload 在主机端离线复现校验；按 `docs/RECOVERY.md` 走 `Tools → Advanced Logger` QR 导出原话 |
-| Wi-Fi | `addon18c` 首笔 `smpe2` 超时；`addon19` 六轨 `physical ready` 后 `smpe3` 停在 `triggered, polling` | `DitingWifi` fork 自 `zizhan` `PongWifi` 但删掉 5 项已验证修复（`wait_event_timeout_once`、`adapt_dispatcher_timers`、basic-rate/重连、`nw_wifi_rssi_limits`、`InterfaceNamer`）且自增 `station_identity()`；RPMh 另有 TCS4/TCS1/`tcs0` 冲突。按 `PLAN.md` 整包回灌 `UniXNU-zizhan @ 034a0b0`，仅保留 Diting 板级值与 MSI INTID172 |
-| ADSP / 电量 | ADSP stage 7 `0x30030=7` 超时（-60）；`DitingBattery` 缺 `AppleSmartBattery` | 抄 `zizhan` `PongBattery`（`AppleSmartBattery` 类名）+ `ShengBattmgr.c` 小米属性 +1 偏移 + `PongRpmh` TCS4 判据；健康度转圈（`thermalmonitord`/`powerd`）在 `zizhan` 亦未闭环，不伪造状态 |
-| UI 帧率 | `addon18` 桌面掉帧严重 | 抄 `zizhan` `ui_compat18.c` 的 `UIKit.InProcessAnimationManager` 钩子（95.3 fps）+ 移植上游 Turnip `c34f018`/`2bbb39d` |
+| 重编内核早崩 | `addon19` 之后重编内核（`addon35`/`39`/`40`/`42`/`44`）均早崩；`addon39`/`40` 符号化落点 `_cfil_data_filter+0x13c` | **主机端已对齐**（`port/zizhan-sync` `890532b`）：`build-xnu-ipados18.sh` 恢复 `patch --forward` 并剥离 `0001` 以外编号补丁；`build-release-image-linux.py` 默认 `--prelink-kernel`（un-prelinked 输入、9 个 library-only 组件）；`CONFIG_XNU_PRELINKED_IOSURFACE=n`；kernel sha `6553048f…`、prelink 候选 `c3dfa0f5…`。真机待验 |
+| Loader `Compromised Data` | `addon45`–`48` 在菜单被拒 | **主机端已扩检**（`18870af`）：`check-loader-adt-contract.py` 扩为完整 DarwinBoot 契约（TrustCache/RootPolicies、16-byte 零槽、packed ramdisk、official/fork `/chosen`、boot-arg 长度/ASCII）。199 镜像扫描：116 PASS / 75 FAIL / 8 ERROR；`addon23`–`36` 因早于 `e8e82d6` 的 GpuAddon 槽预留而 FAIL，`addon45`–`47` 因 initrd 无 RAMDisk 槽 FAIL；`addon18`/`addon48`/B1 PASS |
+| Wi-Fi | `addon18c` 首笔 `smpe2` 超时；`addon19` 六轨 `physical ready` 后 `smpe3` 停在 `triggered, polling` | **主机端已回灌**（`0bd067f`/`00daa2a`）：整包对齐 `UniXNU-zizhan @ 034a0b0` `PongWifi`，恢复 `wait_event_timeout_once`/`adapt_dispatcher_timers`/重连与 basic-rate/`nw_wifi_rssi_limits`/`scan_result24`/`bdwlang` BDF 前缀/锁外通知队列，撤掉 `station_identity`、6 GHz 跳过、staged/forceFlush、合成 MAC。live-DT TCS 映射：触控 TCS0、Wi-Fi/ADSP 共享 TCS1、GPU TCS2；Goodix `io_supply_on()` 经 `diting_rpmh_vote()`。`diting_wifi_ipa` 缺省 `0` 并推迟 `smpe3` 轨。kernel sha `bd69c8b7…`，ath11k 独立编译净。真机待验 |
+| ADSP / 电量 | ADSP stage 7 `0x30030=7` 超时（-60）；`DitingBattery` 缺 `AppleSmartBattery` | **主机端已对齐**（`c46603f`）：发布 `AppleSmartBattery`（含 `MaximumCapacityPercent`/`Serial`/`BatteryData`），Xiaomi 属性 ID 在 12 后 +1 偏移，去掉 `*10` 温度缩放。kernel sha `8d057e5c…`。真机待验；健康度转圈在 `zizhan` 亦未闭环，不伪造状态 |
+| UI 帧率 | `addon18` 桌面掉帧严重 | **主机端已对齐**（`48c6b80`）：`ui_compat18.c` CADisplayLink swizzle 同时覆盖 `UIViewInProcessAnimationManager` 与 `UIKit.InProcessAnimationManager`（仅 SpringBoard 安装）；`prepare-diting-mesa.py` 幂等应用 `patches/mesa/0016`/`0017`；Turnip dylib 重建 17,882,280 B sha `ccc122f6…`。userland dylib 仅 macOS（`xcrun --sdk iphoneos`）可构建，主机未验证。真机待验 |
 | 音频 / 蓝牙 / 相机 | 均未接入；Data 窗口仅 8 GiB | 音频：live DT 为双 `CS35L41 @ 0x40/0x42`（`TFA9873` 不存在），参照 `UniXNU-sheng` AudioReach + `gts7xlwifi` `T970Audio.cpp`；蓝牙：参照 `UniXNU/QcaBluetooth` + `gts7xlwifi` `bluetoothd` 补丁；相机暂无 iOS 原生 H9 ISP 方案 |
 
 **未达成、不得声称可用**：Wi-Fi 扫描/关联/DHCP、电量与充电状态、Metal 逐应用兼容性与稳定帧率、音频、蓝牙、相机、休眠唤醒、按键关机。
 
 ## 下一轮工作重点（社区优先，主机验证后再上机）
 
-1. **主机端底座收敛（手机未连接时可完成）**：
-   - 对照 `UniXNU-zizhan` 恢复 `library_only_components` 预链接与 `build-xnu-ipados18.sh` `--forward` / 补丁剥离保护，二分/清理 `749e77b` 后新增的 `zzzz…` 补丁；
-   - 在主机端跑通 `DarwinBoot` 校验测试与 `check-loader-adt-contract.py` / `check-storage-bindings.py`，确认不触发 `Compromised Data`。
-2. **整包回灌 `zizhan` Wi-Fi + 电池（`dev` 集成）**：
-   - 按 `D:\ai\diting\build-work\evidence-20261117-copy-plan\PLAN.md` W1–W10 整包对齐 `UniXNU-zizhan @ 034a0b0` 的 `PongWifi`/`build-pong-ath11k.py`、`PongBattery`（`AppleSmartBattery`）与 `ShengBattmgr.c`，撤掉 `tcs0` 补丁，保留 Diting 板级常量与 MSI 路由。
-3. **单变量上机验收（需设备连接与用户在场）**：
-   - 每轮只改一个变量、带完整诊断参数、只做 RAM-only `fastboot boot`，按 `PLAN.md` W12 阶梯逐段取 `ramoops` 与 `Advanced Logger` 原文；写分区前必须单独授权。
+1. **构建候选镜像（手机未连接时可完成）**：
+   - 在 `port/zizhan-sync` 分支用现有配方产出一张候选 boot 镜像（kernel `bd69c8b7…`/`8d057e5c…` 叠加后的新基线 + addon18 args + library-only prelink `c3dfa0f5…`），先跑 `check-loader-adt-contract.py`、`check-storage-bindings.py` 与 `porting-record.py check` 三张主机门禁。
+2. **单变量上机验收（需设备连接与用户在场；host-only 改动一律先验证再上机）**：
+   - 每轮只改一个变量、只做 RAM-only `fastboot boot`，逐段取 `ramoops` 与 `Advanced Logger` 原文；写分区前必须单独授权。建议顺序：
+     - TCS0–TCS4 探针：确认活动槽 0–2、共享 TCS1、GPU TCS2 的实际投票与 `via=` 判据；
+     - 6 条 WLAN 轨 + `diting_wifi_ipa=1`（恢复 `smpe3`）：看 `physical ready` 与 PCIe/MHI/QMI 推进；
+     - 电池/GLINK：`AppleSmartBattery` 发布、读数与插拔，ADSP stage 7→8+；
+     - GPU：桌面 fps 与 Metal 兼容性回归。
 
 上机约束：只 `fastboot boot`（RAM-only），不写分区；使用 `D:\ai\diting\build-work` 最终镜像，启动前核对 sha256 与载荷一致。
 

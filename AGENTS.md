@@ -1804,3 +1804,17 @@ work is the boot itself, not the inputs.
 - **文档与约束更新**：
   - `D:\ai\diting\` 根目录过期交接/执行计划（`Diting进桌面路线图-20261111.md`、`子代理集群执行计划-20261112.md`、`audit-20261113-本地成果审视.md`、`skill-material-inventory.md`、11-15/11-16 交接）移入 `D:\ai\diting\archive-20261117\`，仅保留 `交接-2026-11-17-状态与下一步.md` 与 `OS窗口写入与回退-安全版-20261111.md`。
   - 仓库内 `docs/USB-LOGGING-PLAN.zh.md` 归档为 `docs/archive/2026-11-11-usb-logging-plan.md`；更新 `AGENTS.md` 顶部指针、新增 `# 社区优先与移植铁律` 并同步更新 `docs/STATUS.md` 与 `docs/ARCHITECTURE.md`。
+
+
+## 2026-11-17 — zizhan sync batches ①–⑥（host-only）
+
+- **输入**：以 `UniXNU-zizhan @ 034a0b0`（同 SM8475 + QCA6490 + Adreno 730v3 + iPadOS 18.7.10/22H374）为社区基线，按 `build-work/evidence-20261117-copy-plan/PLAN.md` 把 `diting-ci` 的构建/loader/Wi-Fi/电池/GPU 路径整包回灌对齐；分支 `port/zizhan-sync`（自 `dev` `6e1933e`）。**本轮全部 host-build/静态校验，手机未连接、未上机、未派 CI、未 touch 设备，未改 `UniXNU-sheng`。**
+- **命令**：批 ① `build-xnu-ipados18.sh` / `build-release-image-linux.py`；② `scripts/check-loader-adt-contract.py`（扩为完整 DarwinBoot 契约）；③ `drivers/DitingPower/DitingPlatformResources.cpp` + `0001` patch 的 `io_supply_on()`；④ `drivers/DitingWifi` 整包回灌 + `diting_wifi_ipa`；⑤ `DitingBattery.cpp` / `ShengBattmgr.c`；⑥ `ui_compat18.c` / `prepare-diting-mesa.py` / `patches/mesa/0016` / `0017`。
+- **观察**（host）：
+  - 提交列：`890532b` build 对齐、`18870af` loader 契约扩检、`0bd067f` RPMh TCS/Goodix、`00daa2a` Wi-Fi 回灌、`c46603f` `AppleSmartBattery`、`48c6b80` GPU/SpringBoard+Turnip。
+  - kernel sha：build `6553048f…`、RPMh `523f81b5…`、Wi-Fi `bd69c8b7…`、电池 `8d057e5c…`；library-only prelink 候选 `c3dfa0f5…`（9 个 library-only 组件）；kernel_args 恢复 addon18 的 48-token 行（994 B）；Turnip dylib 17,882,280 B sha `ccc122f6…`。
+  - loader 扫描 199 镜像：116 PASS / 75 FAIL / 8 ERROR；`addon23`–`36` 因早于 `e8e82d6` GpuAddon 槽预留 FAIL，`addon45`–`47` 因 initrd 无 RAMDisk 槽 FAIL；`addon18`/`addon48`/B1 PASS。
+  - live-DT TCS 映射：活动槽 0–2，触控 TCS0 / Wi-Fi+ADSP 共享 TCS1 / GPU TCS2（自 TCS3 迁入）；`diting_wifi_ipa` 缺省 `0` 并推迟 `smpe3` 轨；Xiaomi 电池属性 ID 在 12 后 +1，去 `*10` 温度缩放。
+- **结论**：上述 6 项均为 `device-unverified`（host-build/静态校验通过，无任何真机日志）；`port/zizhan-sync` 未合入 `dev`/`main`。
+- **下一步**：先在 `port/zizhan-sync` 构建一张候选 boot 镜像并跑通三张主机门禁，再按「单变量、RAM-only `fastboot boot`」逐段上机（TCS0–4 探针 → 6 轨 + `diting_wifi_ipa=1` → 电池/GLINK → GPU fps）。
+- **限制**：userland dylib（`libditing-ui18` / Turnip 用户态）构建为 macOS-only（`xcrun --sdk iphoneos`），本机 host 无法验证。

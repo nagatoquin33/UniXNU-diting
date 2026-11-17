@@ -4,7 +4,7 @@ Diting 的电源、ADSP 与音频：PAS1 加载签名 ADSP 固件，GENI I2C 驱
 
 ## 适配硬件
 
-- SM8475 APSS：SMEM `80900000/200000`、TCSR mutex3 `1f43000`、IPCC `ed18000` / INTID261、AOSS `c300000`；APSS DRV2 用 active TCS4（GPU 独占 TCS3）
+- SM8475 APSS：SMEM `80900000/200000`、TCSR mutex3 `1f43000`、IPCC `ed18000` / INTID261、AOSS `c300000`；APSS DRV2 活动槽为 TCS0–TCS2（触控 TCS0，Wi-Fi/ADSP 共享 TCS1，GPU 独占 TCS2），TCS3–TCS4 为 sleep/保留槽
 - LPASS ADSP：PAS1、40 MiB 预留内存、SMP2P 与 GLINK
 - 音频：GENI I2C `a94000`（`qupv3_se13_i2c_active`，GPIO48/49），TFA9873 双功放地址 `0x34/0x35`，复位 GPIO1/89，WCD938x，tertiary MI2S SD1
 - 电池/充电器：按 NothingOSS `qti_battery_charger.c` 的单电池属性编号解码，不写充电限值
@@ -26,8 +26,8 @@ Diting 专属实现。协议与服务结构参照 UniXNU-sheng 的 Qualcomm 实�
 - `DitingAdsp.cpp`：手机自身 signed ADSP 固件、PAS1、40 MiB 预留内存、SMP2P、GLINK、ready/fatal 通知和有界等待。
 - 实际 SMEM `80900000/200000`、TCSR mutex3 `1f43000`、IPCC `ed18000` / INTID261、AOSS `c300000`。不使用 Sheng 的 SM8550 IPCC、固件或 PAS36 DTB。
 - 原厂设备树的 ADSP 保留区为 0x9fd00000，大小 0x03100000。加载前用 pmap_has_managed_page 核对与所有 XNU RAM 段的重叠。默认固件从 /diting/firmware/adsp.mbn 读取，也可由本地 addon 安装到 /private/var/ngpu/firmware/adsp.mbn，再通过 diting_adsp-fw=/private/var/ngpu/firmware 选择。两条路径均经 PAS1 硬件认证。
-- 电源请求与 WLAN 共用 APSS active TCS4 的 IOLock；GPU 的 active TCS3 保持独立。只保留启动 minima，不在 handover 时降掉共享电源投票。
-- `DitingBattery.cpp` / `ShengBattmgr.c`：沿用 UniXNU 协议 API，以 NothingOSS `qti_battery_charger.c` 的单电池属性编号解码；不访问 Xiaomi BOARD_GET 扩展、不写充电限值。
+- 电源请求与 WLAN 经板级共享投票器 `diting_rpmh_vote()` 提交到 APSS 活动 TCS1 的 IOLock；Goodix 触控的 `io_supply_on()` 也经同一共享投票器（weak import），不再用私有 RPMh 写器。GPU 的 active TCS2 保持独立。只保留启动 minima，不在 handover 时降掉共享电源投票。
+- `DitingBattery.cpp` / `ShengBattmgr.c`：沿用 UniXNU 协议 API，以 `AppleSmartBattery` 类名发布（含 `MaximumCapacityPercent`/`Serial`/`BatteryData`）；按 `qti_battery_charger.c` 单电池属性解码，但 Xiaomi 电池属性 ID 在 12 之后整体 +1 偏移，不再做 `*10` 温度缩放；不访问 Xiaomi BOARD_GET 扩展、不写充电限值。
 - `DitingAudio.cpp`：`adsp_apps`、APM speaker/playback graph、TFA9873 配置、独立 SID1801 DMA 和输出环；只有真实初始化完成才发布 `DitingAudio`。尚无真机播放成功记录。
 
 ## 板级音频约束

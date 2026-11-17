@@ -520,3 +520,19 @@ completion = ["A diting device-capture showing cs35l41 codec detection and an ac
 limits = ["Inherited Pong audio results do not count as diting verification; no analog gain, protection or calibration changes without factory data"]
 next_action = ["Inventory cs35l41 clocks, MI2S wiring and reset/control GPIOs from the live DT, then compile the audio build into a RAM-only test image"]
 evidence = []
+
+
+[[area]]
+id = "zizhan-sync-2026-11-17"
+status = "host-verified"
+provenance = "zizhan"
+components = ["DitingPlatform24", "XnuPrelink"]
+paths = ["scripts/build-xnu-ipados18.sh", "scripts/build-release-image-linux.py", "scripts/check-loader-adt-contract.py", "scripts/prepare-diting-mesa.py", "drivers/DitingPower/DitingPlatformResources.cpp", "drivers/DitingPower/DitingBattery.cpp", "drivers/DitingPower/ShengBattmgr.c", "drivers/DitingWifi/**", "patches/xnu-ipados18/series", "patches/mesa/0016*", "patches/mesa/0017*", "configs/diting-wifi-sm8475.json"]
+inputs = ["UniXNU-zizhan @ 034a0b0 (same SM8475 + QCA6490 + Adreno 730v3 + iPadOS 18.7.10/22H374)", "build-work/evidence-20261117-copy-plan/PLAN.md"]
+configuration = ["port/zizhan-sync branch off dev 6e1933e; diting_ipados18_defconfig; CONFIG_XNU_PRELINKED_IOSURFACE=n"]
+procedure = ["Batch-align the build, loader-contract, Wi-Fi, battery and GPU paths to the zizhan community baseline", "verify each batch with host builds and static checkers before any device test"]
+findings = ["Six host-verified commits 890532b/18870af/0bd067f/00daa2a/c46603f/48c6b80: patch loop keeps only 0001 + patch --forward; prelink defaults to --prelink-kernel with 9 library-only components (candidate c3dfa0f5); loader checker sweep of 199 images = 116 PASS / 75 FAIL / 8 ERROR; live-DT TCS map = touch TCS0, Wi-Fi+ADSP shared TCS1, GPU TCS2; diting_wifi_ipa defaults 0 and defers smpe3; AppleSmartBattery published with Xiaomi +1 property IDs.", "All six changes are host-build and static-check only. No device test has been run; every batch is device-unverified."]
+completion = ["A device capture for each area: TCS0-4 probe, WLAN rails + diting_wifi_ipa=1 link, AppleSmartBattery readings, GPU fps regression"]
+limits = ["Not merged to dev/main; userland dylib (libditing-ui18/Turnip) build is macOS-only (xcrun --sdk iphoneos) so host-unverified; no claim of working Wi-Fi, battery or GPU until a device log shows it"]
+next_action = ["Build a candidate boot image on port/zizhan-sync, pass the three host gates, then single-variable RAM-only fastboot boot rounds"]
+evidence = [{kind = "host", reported_kind = "host-build", reference = "AGENTS.md", command = "git log --oneline dev..port/zizhan-sync; python3 scripts/check-loader-adt-contract.py build-work/diting-addon18.img", revision = "48c6b806bfa67a095b51b74257d7b36d67f588f0", result = "Six commits on port/zizhan-sync; loader contract checker expanded and addon18/addon48 PASS; kernel shas 6553048f/523f81b5/bd69c8b7/8d057e5c; prelink candidate c3dfa0f5."}]
