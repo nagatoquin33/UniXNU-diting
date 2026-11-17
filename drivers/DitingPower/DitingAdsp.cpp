@@ -477,7 +477,7 @@ bool attachIrqs() {
         IOSleep(250);
     }
     if (rc) {fail(StDoorbells, rc); return false;}
-    // TCS4 is polled by the shared Diting RPMh owner; no RSC IRQ theft.
+    // The shared RPMh owner polls its active TCS slot; no RSC IRQ theft.
     const uint32_t enable[3] = {qcom_ipcc_id(QCOM_IPCC_CLIENT_LPASS, QCOM_IPCC_SIGNAL_SMP2P),
                                 qcom_ipcc_id(QCOM_IPCC_CLIENT_LPASS, QCOM_IPCC_SIGNAL_GLINK_QMP),
                                 qcom_ipcc_id(QCOM_IPCC_CLIENT_AOP, QCOM_IPCC_SIGNAL_GLINK_QMP)};
