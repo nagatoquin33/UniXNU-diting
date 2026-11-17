@@ -1,6 +1,20 @@
 # Diting probe policy
 
-> 当前状态以 `D:\ai\diting\交接-2026-11-11-准备用户态.md` 为准，执行步骤见 `D:\ai\diting\DeepSeek执行计划-进系统与Diting整理-20261111.md`。下方带日期的段落是历史实机与构建记录。
+> 当前权威状态以 `D:\ai\diting\交接-2026-11-17-状态与下一步.md`、复制计划 `D:\ai\diting\build-work\evidence-20261117-copy-plan\PLAN.md` 与 [`docs/STATUS.md`](docs/STATUS.md) 为准（2026-11-11～11-16 的旧交接与执行计划已归档至 `D:\ai\diting\archive-20261112/` 与 `archive-20261117/`）。下方带日期的段落是历史实机与构建记录。
+
+# 社区优先与移植铁律（强制，优先于自研）
+
+iOS/iPadOS 移植工作量极大，**严禁脱离官方与社区基线自己闭门修修补补**。任何新任务、报错定位或外设适配必须先看文档和社区仓库，**能抄就抄**：
+
+1. **先查再动手（按优先级检索本地参照源）**：
+   - 官方文档与组件目录：`~/unixnu/UniXNU-upstream/docs/zh/{porting,concepts,drivers,devices}/` 与 `~/unixnu/UniXNU-upstream/components.toml`（优先确认是否有官方现成组件，如 `DarwinBoot`、`XnuPrelink`、`QcaBluetooth`、`AdrenoMetal`）。
+   - 最近同平台实机已验证仓库：**`~/unixnu/copy-refs/UniXNU-zizhan`（@ `034a0b0`，同 SM8475 + QCA6490 + Adreno 730v3 + iPadOS 18.7.10 / 22H374，已实机跑通 Wi-Fi 扫描/WPA2/DHCP/HTTPS、电池读数与插拔、95.3 fps GPU）**。
+   - 其他已实机验证参照：`~/unixnu/UniXNU-sheng`（SM8550 官方架构 / AudioReach / `QcaBluetooth` / `BatteryProbe`）、`UniXNU-upstream/docs/zh/devices/gts7xlwifi.md`（`CS35L41` / `QCA6390` `bluetoothd` 补丁 / CMIO 相机）、`j716f.md`。
+2. **能整包抄/复用就绝不自造轮子或保留漂移分叉**：
+   - 凡社区已在同芯片/同 OS ABI 跑通的模块，直接整包对齐其实现与构建配方（如 `zizhan` 的 `PongWifi` + `build-pong-ath11k.py`、`PongBattery` 的 `AppleSmartBattery` 与 `ShengBattmgr` 小米 +1 偏移、`PongRpmh` TCS4 投票、`UIKit.InProcessAnimationManager` 动画钩子），**只替换已由 Diting live DT/实机证实的板级常数**（GPIO、PMIC rail、SMMU SID、MSI INTID、保留区地址）。
+   - 不得删掉上游已验证修复（如 `wait_event_timeout_once`、`adapt_dispatcher_timers`、`nw_wifi_rssi_limits`、`library_only_components` 预链接列表、`patch --forward`），不得凭猜测改硬件常量或加静默跳过逻辑。
+3. **禁止在 `patches/xnu-ipados18/` 堆叠 `zzzz…` 插队补丁**：补丁必须按语义序维护且每次重建先剥离衍生补丁；新增或修复只进 `dev` 或短命特性分支，未通过构建/门禁/真机对应验收前不得合入 `main`。
+4. **先主机验证再上机，不留失控分叉**：先跑通主机静态校验与离线合约检查（`check-loader-adt-contract.py`、`check-storage-bindings.py`、`porting-record.py`、host replay）；所有实验工作区随用随清，保留 `main`/`dev` 两条长期分支。
 
 - Optional probes must record PASS, FAIL, SKIP or RUNNING and return to the normal boot path. Never terminate boot with panic, halt or an unbounded loop to display a probe result.
 - On failed prerequisites, log the reason and skip dependent MMIO/DMA work. Do not fabricate successful services, media or hardware resources to keep boot moving.
@@ -845,13 +859,14 @@ work is the boot itself, not the inputs.
 
 以下方法不因阶段或目标改写而失效；每次改 objective/交接时必须保留。
 
-1. 先读 unixnu.com 官方文档与 Sheng/UniXNU 上游实现，按文档契约修改；不靠猜测，不用“关掉功能/哨兵”绕过阻塞。
-2. 本地能验证的先本地验证（静态检查、离线校验、DTB/固件/配置比对），再走 CI。
+1. 先读 `UniXNU-upstream/docs/zh/` 官方文档、`components.toml` 与社区已验证仓库（优先同 SoC/同 OS 的 `copy-refs/UniXNU-zizhan @ 034a0b0`，其次 `UniXNU-sheng`、`gts7xlwifi`、`j716f` 等），**能抄就抄**，按文档契约修改；不靠猜测，不用“关掉功能/哨兵”绕过阻塞。
+2. 本地能验证的先本地验证（静态检查、离线合约校验、host replay、DTB/固件/配置比对），再走 CI 或上机。
 3. 每次失败先读日志定位根因；同一批问题一次改完，只派发一次；禁止重跑碰运气，网络性失败在步骤内重试。
 4. 证据、哈希、阻塞与具体条件写入本文件；未在真机观察确认，不声称成功。
-5. 用 Advanced Logger/ramoops 等日志取证，不拍屏；分区写入/刷机前必须得到明确授权。
-6. 保留 Pong 来源说明与许可证合规；不把厂商 blob 提交或发布到公共仓库。
-7. 以 Sheng 上游为参照消除重复劳动，对比架构与工具链；不为“看起来完成”而删减范围。
+5. 用 Advanced Logger/ramoops/panic QR 等日志取证，不拍屏；分区写入/刷机前必须得到明确授权。
+6. 保留 Pong/zizhan/sheng 来源说明与许可证合规；不把厂商 blob、Apple 资产或私钥提交发布到公共仓库。
+7. 以 `UniXNU-zizhan`（SM8475 + QCA6490 + A730 + 22H374）与 `UniXNU-sheng`/上游组件库为直接复用来源消除重复劳动，禁止继续在分叉驱动与 `zzzz…` 补丁上闭门修补；不为“看起来完成”而删减范围。
+8. 保留 `main`（稳定/已验证）与 `dev`（集成/待验证）两条长期分支；实验 worktree 与临时分支用完即清理，不留失控分叉。
 
 # 2026-11-12 上游同步、本地工具链与固件对照
 
@@ -1775,3 +1790,17 @@ work is the boot itself, not the inputs.
   official-ADT 经私有 device-input dts view（cpu1..7 去掉 disabled 行）构建；未改源码、main 未动。
 - 证据：`build-work/evidence-20261116-combined/README.md`、`addon36-3way.json`、`addon36-build.log`、`args.json`、`final.log`。
   本轮只记录，未上机、未派 CI。
+
+## 2026-11-17 — 社区对齐审计、worktree 清理、静态内存回退合入 dev 与文档约束更新
+
+- **手机未连接**，本轮仅做离线仓库审计、worktree 清理与文档/约束收口，未触及设备、未派 CI。
+- **社区与二进制对照发现**：
+  - 核对 `addon18`（`0e3ee7e6`）、`addon39`（`63a801ed`）与 `addon42`（`2ed33c91`）：`addon18` 为 `library_only_components` 预链接（37 条目，剥离 Apple kext `IOKitPersonalities`），而 `addon35`–`44` 走官方 `kits/XnuPrelink`（41 条目，保留 `IOSurface`/`IOGPUFamily`/`ApplePMGR`/`AppleMobileFileIntegrity`/`IOReportFamily` personality）；`UniXNU-zizhan`（`scripts/build-ipados18-prelinked-boot.py:35-44`）与 `addon18` 一致，显式将这 9 个组件设为 `library_only_components`，且 `build-xnu-ipados18.sh` 用 `patch --forward` + 剥离 `0002+` 补丁防止反向撤销。
+  - `ramoops-addon48.bin` sha256 与 `ramoops-addon19-control.bin` 同为 `08d3ee34…`（`addon48` 未写 ramoops）；`ramoops-addon40-official-loader.bin` 与 `ramoops-after-addon35.bin` 同为 `f50b9b3b…`（未写 XNU ramoops）。
+  - 社区可抄结论汇总（以 `build-work/evidence-20261117-copy-plan/PLAN.md` 与 `UniXNU-upstream/docs/zh/devices/` 为准）：Wi-Fi / 电池（`AppleSmartBattery` + 小米 +1 偏移）/ GPU（`UIKit.InProcessAnimationManager` 95.3 fps + `dropViews`/`pmap_disconnect`）整包对齐 `UniXNU-zizhan @ 034a0b0` + 上游 Turnip `c34f018`/`2bbb39d`；蓝牙参照 `UniXNU/QcaBluetooth` + `UniXNU-gts7xlwifi` `bluetoothd` 补丁；音频（双 `CS35L41 @ 0x40/0x42`）参照 `UniXNU-sheng` AudioReach + `gts7xlwifi` `T970Audio.cpp`；触控保留现有 `Goodix GT9916` 并移除 `tcs0` 补丁。
+- **worktree 清理与合并**：
+  - 将 `diting-ci-dev72` 未提交的 `diting_ram_static_banks()`（`0001-diting-darwin24.patch` +54/−1 行，官方 `DarwinBoot` 下从 `/chosen/diting-allocatable-ram` 回退接管全部 DRAM bank）合并提交到 `diting-ci` **`dev` `91dbe4f`**（`device-unverified`）。
+  - 移除 `diting-ci-dev45`/`dev72`/`dev73`/`dev74` 四个 worktree 并 `git worktree prune`；清理 `UniXNU/drivers/DarwinBoot/Test/__pycache__`；删除失联孤儿目录 `~/unixnu/uefi-diting`（已核对其 `ditingPkg` 与本仓 `platform-firmware/ditingPkg` 字节一致）。
+- **文档与约束更新**：
+  - `D:\ai\diting\` 根目录过期交接/执行计划（`Diting进桌面路线图-20261111.md`、`子代理集群执行计划-20261112.md`、`audit-20261113-本地成果审视.md`、`skill-material-inventory.md`、11-15/11-16 交接）移入 `D:\ai\diting\archive-20261117\`，仅保留 `交接-2026-11-17-状态与下一步.md` 与 `OS窗口写入与回退-安全版-20261111.md`。
+  - 仓库内 `docs/USB-LOGGING-PLAN.zh.md` 归档为 `docs/archive/2026-11-11-usb-logging-plan.md`；更新 `AGENTS.md` 顶部指针、新增 `# 社区优先与移植铁律` 并同步更新 `docs/STATUS.md` 与 `docs/ARCHITECTURE.md`。
