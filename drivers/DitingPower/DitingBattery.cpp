@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BSD-2-Clause-Patent
-// Diting's single-pack battery over PMIC GLINK: an IOPMPowerSource whose
+// Diting's single-pack battery as iOS reads it: an IOPMPowerSource named Apple's own battery class (see below) whose
 // values come from the battery manager in the audio DSP over the PMIC GLINK channel (ShengBattmgr.c). powerd finds every IOPMPowerSource,
 // reads CurrentCapacity/MaxCapacity, IsCharging, ExternalConnected, voltage, amperage and AdapterDetails and listens for the status change
 // message updateStatus sends; the status bar, the lock screen's charging state and Settings > Battery follow from that.
@@ -51,8 +51,11 @@ namespace {
 constexpr uint32_t kRequestMs = 2000, kRefreshMs = 5000, kSlowEvery = 120, kRing = 16, kMessage = 64;
 }
 
-class DitingBattery : public IOPMPowerSource {
-    OSDeclareDefaultStructors(DitingBattery)
+// Named as Apple's battery driver: PerfPowerServices' PLBatteryAgent records the battery (Settings > Battery charts) and answers the
+// health queries only when hasAppleSmartBattery finds this class; powerd derives "Maximum Capacity Percent" and "Battery Service State"
+// from the same entry's NominalChargeCapacity / DesignCapacity / CycleCount / Serial.
+class AppleSmartBattery : public IOPMPowerSource {
+    OSDeclareDefaultStructors(AppleSmartBattery)
     IOWorkLoop *loop = nullptr;
     IOTimerEventSource *request = nullptr, *refresh = nullptr;
     IOInterruptEventSource *inbox = nullptr;
@@ -69,13 +72,13 @@ class DitingBattery : public IOPMPowerSource {
     ShengAdspChannel *channel = nullptr;
 
     static void dspState(void *context, int up) {
-        DitingBattery *self = static_cast<DitingBattery *>(context);
+        AppleSmartBattery *self = static_cast<AppleSmartBattery *>(context);
         __atomic_store_n(&self->channelUp, up ? 1u : 0u, __ATOMIC_RELEASE);
         __atomic_store_n(&self->channelChanged, 1u, __ATOMIC_RELEASE);
         self->inbox->interruptOccurred(nullptr, nullptr, 0);
     }
     static void dspReceive(void *context, const uint8_t *data, uint32_t length) {
-        DitingBattery *self = static_cast<DitingBattery *>(context);
+        AppleSmartBattery *self = static_cast<AppleSmartBattery *>(context);
         IOSimpleLockLock(self->ringLock);
         if (self->ringCount < kRing && length <= kMessage) {
             auto &slot = self->ring[(self->ringHead + self->ringCount) % kRing];
@@ -181,6 +184,27 @@ class DitingBattery : public IOPMPowerSource {
         if (s.raw_mah > 0) number("AppleRawCurrentCapacity", s.raw_mah);
         if (s.full_mah > 0) {number("AppleRawMaxCapacity", s.full_mah); number("NominalChargeCapacity", s.full_mah);}
         if (s.design_mah > 0) number("DesignCapacity", s.design_mah);
+        if (s.full_mah > 0 && s.design_mah > 0) number("MaximumCapacityPercent", s.full_mah * 100 / s.design_mah);
+        // powerd keeps its health history per battery serial: a stable one, the cell has none the battmgr protocol reports.
+        const OSSymbol *serialKey = OSSymbol::withCString("Serial");
+        OSString *serial = OSString::withCString("DITING-BM4V");
+        if (serialKey && serial) setPSProperty(serialKey, serial);
+        OSSafeReleaseNULL(serial); OSSafeReleaseNULL(serialKey);
+        OSDictionary *data = OSDictionary::withCapacity(6);
+        if (data) {
+            const struct {const char *key; int64_t value; bool ok;} fields[] = {
+                {"DesignCapacity", s.design_mah, s.design_mah > 0}, {"CycleCount", s.cycles, s.cycles > 0},
+                {"NominalChargeCapacity", s.full_mah, s.full_mah > 0}, {"StateOfCharge", s.percent, true},
+                {"Voltage", s.voltage_mv, s.voltage_mv > 0}};
+            for (const auto &f : fields) {
+                OSNumber *n = f.ok ? OSNumber::withNumber((unsigned long long)f.value, 32) : nullptr;
+                if (n) {data->setObject(f.key, n); n->release();}
+            }
+            const OSSymbol *key = OSSymbol::withCString("BatteryData");
+            if (key) setPSProperty(key, data);
+            OSSafeReleaseNULL(key);
+            data->release();
+        }
         OSDictionary *adapter = OSDictionary::withCapacity(5);
         if (adapter) {
             OSNumber *family = OSNumber::withNumber(s.adapter_family, 32);
@@ -214,7 +238,7 @@ class DitingBattery : public IOPMPowerSource {
             // The properties are in place before anyone finds the service.
             published = true;
             registerService();
-            native_battery_stats[0] = 4;IOLog("DitingBattery: physical battery power source published %d%% %dmV external=%d charging=%d full=%d adapter=%x %dmV/%dmA\n",s.percent,s.voltage_mv,s.external,s.charging,s.fully_charged,s.adapter_family,s.adapter_mv,s.adapter_ma);
+            native_battery_stats[0] = 4;IOLog("Diting: physical battery power source published %d%% %dmV external=%d charging=%d full=%d adapter=%x %dmV/%dmA\n",s.percent,s.voltage_mv,s.external,s.charging,s.fully_charged,s.adapter_family,s.adapter_mv,s.adapter_ma);
         }
         updateStatus();
     }
@@ -232,7 +256,7 @@ class DitingBattery : public IOPMPowerSource {
     }
 
     static void inboxAction(OSObject *owner, IOInterruptEventSource *, int) {
-        DitingBattery *self = OSDynamicCast(DitingBattery, owner);
+        AppleSmartBattery *self = OSDynamicCast(AppleSmartBattery, owner);
         if (!self) return;
         if (__atomic_exchange_n(&self->channelChanged, 0u, __ATOMIC_ACQ_REL)) {
             const bool up = __atomic_load_n(&self->channelUp, __ATOMIC_ACQUIRE) != 0;
@@ -279,14 +303,14 @@ class DitingBattery : public IOPMPowerSource {
         }
     }
     static void requestAction(OSObject *owner, IOTimerEventSource *) {
-        DitingBattery *self = OSDynamicCast(DitingBattery, owner);
+        AppleSmartBattery *self = OSDynamicCast(AppleSmartBattery, owner);
         if (!self || !self->wasUp) return;
         const uint32_t before = self->bm.cycles_done;
         sheng_battmgr_timeout(&self->bm);
         self->handle(self->bm.cycles_done != before ? BmCycleDone : BmAnswer);
     }
     static void refreshAction(OSObject *owner, IOTimerEventSource *sender) {
-        DitingBattery *self = OSDynamicCast(DitingBattery, owner);
+        AppleSmartBattery *self = OSDynamicCast(AppleSmartBattery, owner);
         if (!self || !self->wasUp) return;
         sheng_battmgr_refresh(&self->bm, ++self->refreshes % kSlowEvery == 0);
         self->handle(BmAnswer);
@@ -298,14 +322,14 @@ public:
         sheng_battmgr_init(&bm);
         loop = IOWorkLoop::workLoop();
         ringLock = IOSimpleLockAlloc();
-        inbox = IOInterruptEventSource::interruptEventSource(this, &DitingBattery::inboxAction);
-        request = IOTimerEventSource::timerEventSource(this, &DitingBattery::requestAction);
-        refresh = IOTimerEventSource::timerEventSource(this, &DitingBattery::refreshAction);
+        inbox = IOInterruptEventSource::interruptEventSource(this, &AppleSmartBattery::inboxAction);
+        request = IOTimerEventSource::timerEventSource(this, &AppleSmartBattery::requestAction);
+        refresh = IOTimerEventSource::timerEventSource(this, &AppleSmartBattery::refreshAction);
         if (!loop || !ringLock || !inbox || !request || !refresh || loop->addEventSource(inbox) != kIOReturnSuccess ||
             loop->addEventSource(request) != kIOReturnSuccess || loop->addEventSource(refresh) != kIOReturnSuccess)
             return false;
         native_battery_stats[0] = 1;
-        const ShengAdspClient client = {&DitingBattery::dspState, &DitingBattery::dspReceive};
+        const ShengAdspClient client = {&AppleSmartBattery::dspState, &AppleSmartBattery::dspReceive};
         channel = sheng_adsp_channel ? sheng_adsp_channel("PMIC_RTR_ADSP_APPS", 1024, 4, 0, &client, this) : nullptr;
         if (!channel) return false;
         native_battery_stats[0] = 2;
@@ -324,11 +348,11 @@ public:
         IOPMPowerSource::free();
     }
 };
-OSDefineMetaClassAndStructors(DitingBattery, IOPMPowerSource)
+OSDefineMetaClassAndStructors(AppleSmartBattery, IOPMPowerSource)
 
 // Called by BatteryProbe.cpp once this file's classes are registered.
 extern "C" void sheng_battery_start(void) {
-    DitingBattery *battery = OSTypeAlloc(DitingBattery);
+    AppleSmartBattery *battery = OSTypeAlloc(AppleSmartBattery);
     if (!battery || !battery->init() || !battery->attach(IOService::getPlatform())) {
         if (battery) battery->release();
         native_battery_stats[0] = -1;
