@@ -86,10 +86,22 @@ jobs:
             --output-dir "$RUNNER_TEMP/diting-phone-donor/ipsw" \
             --jobs 4 --chunk-mib 64 --url "$purl"
           ipsw_path="$(python3 -c "import json; d=json.load(open('$RUNNER_TEMP/diting-phone-donor/ipsw/download-progress.json')); print('$RUNNER_TEMP/diting-phone-donor/ipsw/' + d['image'])")"
-          python3 device/scripts/prepare-ipados18-components.py \
-            --ipsw "$ipsw_path" \
-            --output-dir "$RUNNER_TEMP/diting-phone-donor/22H374" \
-            --only OS
+          mkdir -p "$RUNNER_TEMP/diting-phone-donor/22H374"
+          python3 - "$ipsw_path" "$RUNNER_TEMP/diting-phone-donor/22H374" <<'PY'
+          import pathlib, plistlib, sys, zipfile
+          ipsw, out = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+          with zipfile.ZipFile(ipsw) as zf:
+              raw = zf.read('BuildManifest.plist')
+              (out / 'BuildManifest.plist').write_bytes(raw)
+              m = plistlib.loads(raw)
+              assert (m['ProductVersion'], m['ProductBuildVersion']) == ('18.7.10', '22H374'), m['ProductBuildVersion']
+              os_rel = m['BuildIdentities'][0]['Manifest']['OS']['Info']['Path']
+              dest = out / pathlib.Path(os_rel).name
+              with zf.open(os_rel) as src, dest.open('wb') as dst:
+                  while chunk := src.read(8 << 20):
+                      dst.write(chunk)
+              print('extracted', dest)
+          PY
           rm -rf "$RUNNER_TEMP/diting-phone-donor/ipsw"
           os_aea="$(find "$RUNNER_TEMP/diting-phone-donor/22H374" -name '*.dmg.aea' | head -n 1)"
           manifest="$(find "$RUNNER_TEMP/diting-phone-donor/22H374" -name 'BuildManifest.plist' | head -n 1)"
