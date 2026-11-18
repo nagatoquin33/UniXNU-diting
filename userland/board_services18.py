@@ -33,6 +33,18 @@ def build_wifi(runtime):
         '--entitlements',str(ent),str(target)],check=True)
 
 
+def own_system_file(path, mode):
+    """Set system ownership where the caller may, and the mode everywhere.
+
+    `build-ipados18.py prepare` runs as the normal runner user because it
+    compiles with xcrun/codesign; the later `apply` pass runs as root and sets
+    the OS-copy owners. A direct `board_services18.py` staging pass is root.
+    """
+    if os.geteuid() == 0:
+        os.chown(path, 0, 0)
+    os.chmod(path, mode)
+
+
 def stage(root, runtime=None):
     cache_path = root / 'System/Library/xpc/launchd.plist'
     cache = plistlib.loads(cache_path.read_bytes())
@@ -77,7 +89,11 @@ def stage(root, runtime=None):
             # in wifi_manager_open on that right, preventing its first
             # frame. Expose the native server only once it actually checks
             # in; its own check-in and later normal clients remain intact.
-            services['com.apple.wifi.manager'] = {'HideUntilCheckIn': True}
+            # Merge, do not replace: keep every stock attribute of this port.
+            manager = services.get('com.apple.wifi.manager')
+            services['com.apple.wifi.manager'] = (dict(manager, HideUntilCheckIn=True)
+                                                  if isinstance(manager, dict)
+                                                  else {'HideUntilCheckIn': True})
             reason = 'native MobileWiFi listener is discoverable only after its actual check-in; no unserved MIG port during UI startup'
         elif label in ('com.apple.audiomxd','com.apple.configd'):
             reason='native daemon diagnostics use the existing pstore console without a mobile-user file-open failure'
@@ -113,13 +129,12 @@ def stage(root, runtime=None):
             continue
         target = root / path.lstrip('/')
         target.write_bytes(plistlib.dumps(job, fmt=plistlib.FMT_BINARY))
-        os.chown(target, 0, 0)
-        os.chmod(target, 0o644)
+        own_system_file(target, 0o644)
         changes.append(dict(label=label, reason=reason))
     if runtime is not None:
         target=root/'diting/wifi-bootstrap'
         shutil.copyfile(runtime/'wifi-bootstrap',target)
-        os.chown(target,0,0);os.chmod(target,0o755)
+        own_system_file(target,0o755)
         label='dev.unixnu.diting.wifi-bootstrap'
         path='/System/Library/LaunchDaemons/'+label+'.plist'
         job=dict(Label=label,ProgramArguments=['/diting/wifi-bootstrap'],UserName='root',
@@ -128,7 +143,7 @@ def stage(root, runtime=None):
             StandardErrorPath='/private/var/logs/diting-wifi-bootstrap.log')
         target=root/path.lstrip('/')
         target.write_bytes(plistlib.dumps(job,fmt=plistlib.FMT_BINARY))
-        os.chown(target,0,0);os.chmod(target,0o644)
+        own_system_file(target,0o644)
         cache['LaunchDaemons'][path]=job
         changes.append(dict(label=label,reason='one native power request after real device discovery; no fake interface/control state'))
     if (root/'Applications/MobilePhone.app/Info.plist').is_file() and (root/'diting/phone-register').is_file():
@@ -139,12 +154,11 @@ def stage(root, runtime=None):
             StandardOutPath='/dev/console',StandardErrorPath='/dev/console')
         target=root/path.lstrip('/')
         target.write_bytes(plistlib.dumps(job,fmt=plistlib.FMT_BINARY))
-        os.chown(target,0,0);os.chmod(target,0o644)
+        own_system_file(target,0o644)
         cache['LaunchDaemons'][path]=job
         changes.append(dict(label=label,reason='register actual same-build stock Phone app in mobile LaunchServices'))
     cache_path.write_bytes(plistlib.dumps(cache, fmt=plistlib.FMT_BINARY))
-    os.chown(cache_path, 0, 0)
-    os.chmod(cache_path, 0o644)
+    own_system_file(cache_path, 0o644)
     return changes
 
 

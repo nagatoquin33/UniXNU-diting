@@ -35,6 +35,16 @@ sys.path.insert(0, str(PROJECT / 'tools'))
 from sparsebundle import storage_for
 sys.path.insert(0, str(PROJECT / 'userland'))
 import metal_services18
+import board_services18
+import wifi_service_stage
+
+# Jobs left out of the service cache (UniXNU-zizhan 22H374 rationale). fairplayd.A2
+# exits(0) at once on this port and launchd, holding its KeepAlive ports, relaunches
+# it every 10 s: requests queued there are never answered. locationd's main silo
+# blocked on one (MIG 1203), and through it contextstored -> PowerUIAgent ->
+# Settings > Battery (11-01 g208-g212). Without the job the lookups fail and the
+# clients take their error paths at once.
+EXCLUDED18 = {'com.apple.fairplayd.A2': 'exits at once on this port; its queued requests are never answered'}
 
 CORE = '''com.apple.notifyd com.apple.cfprefsd.xpc.daemon com.apple.cfprefsd.xpc.daemon.system
 com.apple.logd com.apple.syslogd com.apple.distnoted.xpc.daemon com.apple.diagnosticd
@@ -452,7 +462,8 @@ def adapt_job18(job):
     return changes
 
 
-def jobs(root, cryptex, overlay, out, app_cryptex=None):
+def jobs(root, cryptex, overlay, out, app_cryptex=None, excluded=None):
+    exclusions = EXCLUDED18 if excluded is None else excluded
     # Darwin 24 only permits system event publishers/host special ports from
     # its native service cache. File-only import makes even stock notifyd an
     # untrusted job, rejects com.apple.notifyd.matching, then notifyd traps.
@@ -489,6 +500,7 @@ def jobs(root, cryptex, overlay, out, app_cryptex=None):
             reason = None
             if not mapped or not mapped.is_file(): reason = 'program absent from supplied 22H374 OS/SystemOS/AppOS'
             elif job.get('_LimitLoadToVariant') == 'IsDarwinOS': reason = 'DarwinOS variant; this source is iOS'
+            elif label in exclusions: reason = exclusions[label]
             record = dict(source=f.relative_to(root).as_posix(), label=label, program=program,
                           action='excluded' if reason else ('boot' if core or job.get('RunAtLoad') or job.get('KeepAlive') is True else 'on-demand'), reason=reason)
             records.append(record)
@@ -550,7 +562,7 @@ def jobs(root, cryptex, overlay, out, app_cryptex=None):
     if not any(item.get('label') == 'com.apple.cameracaptured' for item in metal_changes):
         raise RuntimeError('com.apple.cameracaptured missing from adapted 22H374 service cache')
     dump(out / 'jobs-report.json', {'jobs': records, 'resources': resources,
-         'metal_services': metal_changes,
+         'metal_services': metal_changes, 'excluded_jobs': exclusions,
          'missing_core_labels': sorted(set(CORE) - selected),
          'service_cache': {'version': 7, 'jobs': len(cached_jobs), 'source_build': '22H374',
                            'path': '/System/Library/xpc/launchd.plist'}})
@@ -1067,6 +1079,25 @@ def helper(a):
     print(out / 'init')
 
 
+def stage_service_policies(overlay, out, root, wifi_binary=None):
+    """Layer the Diting board policy and the Wi-Fi address service on the cache.
+
+    Both run after jobs(): board_services18 edits the cached catalog this build
+    ships, and the Wi-Fi staging adds the one native job the restore plists lack
+    while preserving every board change. fairplayd.A2 is already filtered by
+    EXCLUDED18 inside jobs(), so board_services18's 60 s throttle cannot
+    reintroduce it. wifi_binary is the compiled, signed /diting/wifi-service18.
+    """
+    board_changes = board_services18.stage(overlay)
+    wifi_stage = (wifi_service_stage.stage_service(overlay, wifi_binary, root)
+                  if wifi_binary and wifi_binary.is_file() else None)
+    report = json.loads((out / 'jobs-report.json').read_text())
+    report['board_services'] = board_changes
+    report['wifi_service'] = dict(wifi_stage, binary=str(wifi_binary)) if wifi_stage else None
+    dump(out / 'jobs-report.json', report)
+    return dict(board_services=board_changes, wifi_service=wifi_stage)
+
+
 def prepare(a):
     out = a.out.resolve(); out.mkdir(parents=True, exist_ok=True)
     root, cryptex = a.os_root.resolve(), a.system_cryptex.resolve()
@@ -1082,6 +1113,9 @@ def prepare(a):
     (overlay / 'sbin').mkdir(exist_ok=True)
     init_signature = compile_init(out, a.developer, overlay / 'sbin/launchd')
     counts = jobs(root, cryptex, overlay, out, a.app_cryptex)
+    wifi_service = out / 'wifi-service18'
+    wifi_service_stage.compile_service(wifi_service, a.developer)
+    stage_service_policies(overlay, out, root, wifi_service)
     if a.app_cryptex:
         install_app_cryptex(a.app_cryptex, overlay, numeric_owners=False)
     dump(out / 'phone-artwork.json', phone_wallpaper_resources(root, overlay))
@@ -1392,6 +1426,11 @@ def refresh_jobs(a):
     version = plistlib.loads((a.os_root / 'System/Library/CoreServices/SystemVersion.plist').read_bytes())
     if version.get('ProductBuildVersion') != '22H374': raise RuntimeError('22H374 source jobs required')
     counts = jobs(a.os_root, a.system_cryptex, out / 'overlay', out, a.app_cryptex)
+    # Keep the same two policy layers this out directory was prepared with. The
+    # Wi-Fi binary is already compiled and signed by prepare; restage it here so
+    # refresh_jobs does not drop its job or the InterfaceNamer timeouts.
+    wifi_binary = out / 'wifi-service18'
+    policy = stage_service_policies(out / 'overlay', out, a.os_root, wifi_binary)
     adapt_launchd18(a.os_root / 'sbin/launchd', out / 'launchd.ios', out)
     image = os_copy(out)
     if image.is_symlink() or image.samefile(plan['os_source']): raise RuntimeError('prepared OS copy required')
@@ -1410,6 +1449,16 @@ def refresh_jobs(a):
             destination = target / source.name
             shutil.copyfile(source, destination)
             os.chown(destination, 0, 0); os.chmod(destination, 0o644)
+        for rel in ('diting/wifi-service18',
+                    'System/Library/SystemConfiguration/InterfaceNamer.bundle/Info.plist'):
+            source = out / 'overlay' / rel
+            if not source.is_file(): continue
+            destination = root / rel
+            if destination.is_symlink(): raise RuntimeError('unexpected staged link: ' + rel)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, destination)
+            os.chown(destination, 0, 0)
+            os.chmod(destination, 0o755 if rel.startswith('diting/') else 0o644)
         os.chown(target, 0, 0); os.chmod(target, 0o755)
         cache_target = root / 'System/Library/xpc/launchd.plist'
         cache_target.parent.mkdir(parents=True, exist_ok=True)
@@ -1427,7 +1476,7 @@ def refresh_jobs(a):
     finally:
         run(['hdiutil', 'detach', device])
     dump(out / 'jobs-update.json', dict(build='22H374', counts=counts, data_modified=False,
-         app_cryptex=str(a.app_cryptex) if a.app_cryptex else None,
+         app_cryptex=str(a.app_cryptex) if a.app_cryptex else None, **policy,
          operation='Diting non-Exclaves jobs and native Version 7 service cache', image_verification='skipped by request'))
     if a.app_cryptex:
         plan.update(app_cryptex=str(a.app_cryptex.resolve()), app_cryptex_runtime='/System/Cryptexes/App')

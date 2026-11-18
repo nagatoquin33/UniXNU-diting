@@ -400,8 +400,10 @@ configure_ui_library(void)
 {
     const char *path=DITING_UI_LIBRARY_PATH;
     /* 22H374 has audiomxd and no mediaserverd job. Keep its codec adapter
-     * separate from the UI hooks and their framework dependencies. */
-    const char *base=DITING_UI_LIBRARY_PATH " SpringBoard backboardd InputUI containermanagerd containermanagerd_system Preferences MobilePhone Sileo contextstored SBRendererService PowerUIAgent wifid" DITING_UI_EXTRA_PROCESSES;
+     * separate from the UI hooks and their framework dependencies. Photos is
+     * here for its PXCreateContext zero-size clamp only; the adapter returns
+     * after that hook and runs no status-bar/container code in that process. */
+    const char *base=DITING_UI_LIBRARY_PATH " SpringBoard backboardd InputUI containermanagerd containermanagerd_system Preferences MobilePhone Sileo contextstored SBRendererService PowerUIAgent wifid Photos" DITING_UI_EXTRA_PROCESSES;
     struct stat st;
     if (stat(path,&st)!=0 || (st.st_mode&S_IFMT)!=S_IFREG || st.st_uid!=0) {
         puts("Diting init: UI compatibility library absent; SKIP");return;
