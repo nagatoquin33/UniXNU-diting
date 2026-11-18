@@ -12,6 +12,16 @@ on:
         description: "IPSW URL (default: board.toml [ipsw] url)"
         required: false
         type: string
+      phone_ipsw_url:
+        description: "Matching 22H374 iPhone IPSW URL for phone_components18 (keyboard/WiFiKitUI)"
+        required: false
+        type: string
+        default: "https://updates.cdn-apple.com/2026WinterFCS/fullrestores/140-97953/5F3051CD-5405-4FEF-889E-C3B78E0F376F/iPhone11,8_18.7.10_22H374_Restore.ipsw"
+      data_mib:
+        description: "Data APFS volume size in MiB (default: 24576 = 24 GiB)"
+        required: false
+        type: string
+        default: "24576"
 
 permissions:
   contents: read
@@ -61,6 +71,40 @@ jobs:
           done
           sudo -n true || { echo 'this runner cannot sudo -n, and the userland chain needs it'; ok=0; }
           [ "$ok" = 1 ]
+      - name: phone donor components (optional)
+        id: phone_donor
+        run: |
+          set -euo pipefail
+          purl="${{ inputs.phone_ipsw_url }}"
+          if [ -z "$purl" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          rm -rf "$RUNNER_TEMP/diting-phone-donor"
+          mkdir -p "$RUNNER_TEMP/diting-phone-donor/ipsw" "$RUNNER_TEMP/diting-phone-donor/mnt"
+          python3 device/scripts/download-ipados18-restore.py \
+            --output-dir "$RUNNER_TEMP/diting-phone-donor/ipsw" \
+            --jobs 4 --chunk-mib 64 --url "$purl"
+          ipsw_path="$(python3 -c "import json; d=json.load(open('$RUNNER_TEMP/diting-phone-donor/ipsw/download-progress.json')); print('$RUNNER_TEMP/diting-phone-donor/ipsw/' + d['image'])")"
+          python3 device/scripts/prepare-ipados18-components.py \
+            --ipsw "$ipsw_path" \
+            --output-dir "$RUNNER_TEMP/diting-phone-donor/22H374" \
+            --only OS
+          rm -rf "$RUNNER_TEMP/diting-phone-donor/ipsw"
+          os_aea="$(find "$RUNNER_TEMP/diting-phone-donor/22H374" -name '*.dmg.aea' | head -n 1)"
+          manifest="$(find "$RUNNER_TEMP/diting-phone-donor/22H374" -name 'BuildManifest.plist' | head -n 1)"
+          python3 device/scripts/decrypt-ipados18-aea.py \
+            --input "$os_aea" \
+            --output "$RUNNER_TEMP/diting-phone-donor/phone-os.dmg"
+          rm -f "$os_aea"
+          plist_out="$(hdiutil attach "$RUNNER_TEMP/diting-phone-donor/phone-os.dmg" -readonly -nobrowse -mountrandom "$RUNNER_TEMP/diting-phone-donor/mnt" -plist)"
+          dev="$(python3 -c "import plistlib,sys; p=plistlib.loads(sys.stdin.buffer.read()); print(next(e['dev-entry'] for e in p['system-entities'] if e.get('mount-point')))" <<< "$plist_out")"
+          root="$(python3 -c "import plistlib,sys; p=plistlib.loads(sys.stdin.buffer.read()); print(next(e['mount-point'] for e in p['system-entities'] if e.get('mount-point') and __import__('pathlib').Path(e['mount-point'], 'System/Library/CoreServices/SystemVersion.plist').is_file()))" <<< "$plist_out")"
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+          echo "dev=$dev" >> "$GITHUB_OUTPUT"
+          echo "root=$root" >> "$GITHUB_OUTPUT"
+          echo "manifest=$manifest" >> "$GITHUB_OUTPUT"
+          df -h
       - name: prepared userland
         id: userland
         run: |
@@ -74,6 +118,10 @@ jobs:
             *) echo "ipsw_url must be an https URL, got: ${url}" >&2; exit 1 ;;
           esac
           rm -rf "$RUNNER_TEMP/diting-userland" "$RUNNER_TEMP/diting-ipsw-work"
+          extra=()
+          if [ "${{ steps.phone_donor.outputs.enabled }}" = "true" ]; then
+            extra+=(--phone-donor-root "${{ steps.phone_donor.outputs.root }}" --phone-manifest "${{ steps.phone_donor.outputs.manifest }}")
+          fi
           python3 device/scripts/prepare-diting-userland-from-ipsw.py \
             --ipsw-url "$url" \
             --work-dir "$RUNNER_TEMP/diting-ipsw-work" \
@@ -81,9 +129,15 @@ jobs:
             --developer "$(xcode-select -p)" \
             --json-out "$RUNNER_TEMP/diting-userland/report.json" \
             --volume-layout-out "$RUNNER_TEMP/diting-userland/volume-layout.json" \
-            --data-mib 8192 \
-            --jobs 4
+            --data-mib "${{ inputs.data_mib }}" \
+            --jobs 4 \
+            "${extra[@]}"
           df -h
+      - name: cleanup phone donor
+        if: always() && steps.phone_donor.outputs.enabled == 'true'
+        run: |
+          hdiutil detach "${{ steps.phone_donor.outputs.dev }}" || true
+          rm -rf "$RUNNER_TEMP/diting-phone-donor" || true
       - uses: actions/upload-artifact@v4
         with:
           name: diting-os-window
@@ -91,6 +145,7 @@ jobs:
           if-no-files-found: error
           path: |
             ${{ runner.temp }}/diting-userland/diting-ipados18-system.cdr
+            ${{ runner.temp }}/diting-userland/diting-ipados18-data.packed
             ${{ runner.temp }}/diting-userland/report.json
             ${{ runner.temp }}/diting-userland/volume-layout.json
             ${{ runner.temp }}/diting-userland/apply-complete.json

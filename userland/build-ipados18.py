@@ -36,6 +36,7 @@ from sparsebundle import storage_for
 sys.path.insert(0, str(PROJECT / 'userland'))
 import metal_services18
 import board_services18
+import phone_components18
 import wifi_service_stage
 
 # Jobs left out of the service cache (UniXNU-zizhan 22H374 rationale). fairplayd.A2
@@ -1244,6 +1245,22 @@ def apply(a):
             p.rename(dest); moved.append(p.name)
         if file_sha(stock / 'launchd.original') != plan['apple_sha256']['sbin/launchd']:
             raise RuntimeError('original launchd changed')
+        metallibs = sorted(
+            '/' + p.relative_to(root).as_posix()
+            for base in ('System/Library/Frameworks', 'System/Library/PrivateFrameworks')
+            if (root / base).is_dir()
+            for p in (root / base).rglob('*.metallib')
+            if p.is_file() and not p.is_symlink()
+        )
+        primelist = out / 'framework-metallibs.txt'
+        primelist.write_text('\n'.join(metallibs) + '\n')
+        shader_changes = metal_services18.expand_framework_shaders(root, primelist)
+        dump(out / 'shader-expand-report.json', shader_changes)
+        donor_root = os.environ.get('DITING_PHONE_DONOR_ROOT', '').strip()
+        donor_manifest = os.environ.get('DITING_PHONE_MANIFEST', '').strip()
+        if donor_root and donor_manifest:
+            phone_report = phone_components18.stage(root, Path(donor_root), Path(donor_manifest), out)
+            dump(out / 'phone-components-report.json', phone_report)
     finally:
         run(['hdiutil', 'detach', device])
     data = out / 'data-mount'

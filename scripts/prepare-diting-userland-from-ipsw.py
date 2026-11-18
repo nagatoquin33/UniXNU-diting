@@ -521,6 +521,10 @@ def main():
     parser.add_argument('--chunk-mib', type=int, default=64, help='IPSW download chunk size')
     parser.add_argument('--data-mib', type=int, default=DATA_MIB,
                         help='size of the fresh Data APFS volume in MiB (default: 8 GiB)')
+    parser.add_argument('--phone-donor-root', type=Path,
+                        help='optional mounted 22H374 iPhone OS root for phone_components18')
+    parser.add_argument('--phone-manifest', type=Path,
+                        help='BuildManifest.plist matching --phone-donor-root')
     parser.add_argument('--keep-work', action='store_true',
                         help='keep the downloaded and decrypted intermediates for a post mortem')
     args = parser.parse_args()
@@ -819,8 +823,13 @@ def main():
     # apply refuses a target that is the source file, so the two raw images
     # have to outlive this step; they are removed immediately afterwards.
     rec.stage('apply')
-    rec.run('apply userland', root + [str(ROOT / 'userland/build-ipados18.py'),
-                                      'apply', '--out', str(out)])
+    apply_cmd = list(root)
+    if args.phone_donor_root and args.phone_manifest:
+        apply_cmd += ['env',
+                      f'DITING_PHONE_DONOR_ROOT={args.phone_donor_root}',
+                      f'DITING_PHONE_MANIFEST={args.phone_manifest}']
+    apply_cmd += [str(ROOT / 'userland/build-ipados18.py'), 'apply', '--out', str(out)]
+    rec.run('apply userland', apply_cmd)
     expect_file(out / 'apply-complete.json', 'apply', 2)
 
     # -- 10. finish -------------------------------------------------------
