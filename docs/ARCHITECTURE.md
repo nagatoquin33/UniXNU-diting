@@ -59,27 +59,17 @@
 - 工作内核钉版：**`121ea7f11afc3bbeb5d56336ab1550fba3ddf228`**（核心 fork `dev`，merge upstream `9931232fd68b8ae1db0abd957ecba417f1996e52`/PR #272；在 diting-ci `dev` `2d6d0c2` 上 kernel exit 0、kernel `0c1a2c1f…` 73,781,248 B、26 entries 含 IOGPU、construct bytes `fd7bbfa9…21320094`、storage/porting PASS）。**条件**：仅 build-verified；addon30 重建与设备启动、以及 diting-ci `main`（`f853d0d`）在该 core 上的复验仍待完成；上一 pin `fd2f4d1` 是 `dev` 的祖先，回滚只需改 pin。核心 fork 只保留 `main` `377f0ff` 与 `dev` `121ea7f`；首次干净构建前需清理 diting-ci 的 4 个过期 refer 软链（见 [`core-provenance.json`](../core-provenance.json) 的 `prerequisite_refer_cleanup`）。
 - 同步原则：先 fetch 阅读上游变更（文档、契约、组件），再决定是否 bump 钉版；不向上游推送。
 
-## 6. 分支策略（2026-11-16 起）
+## 6. 分支策略（2026-11-18 起：单分支 `main`）
 
-单人维护的仓库只保留两条长期分支，功能分支短命、合并后立即删除；远端只有 `main` 与 `dev`。
+单人维护的自有仓库（设备仓 `nagatoquin33/UniXNU-diting` 与核心 fork `nagatoquin33/UniXNU`）统一**只保留唯一分支 `main`**，不再保留 `dev` 或临时 `ci/*`、`port/*`、`fix/*` 分支。
 
-| 分支 | 角色 | 规则 |
+| 仓库 | 唯一分支 | 规则 |
 | --- | --- | --- |
-| `main` | 稳定/已验证 | 只接受已通过对应验证（构建、离线门禁、真机或 CI 证据）的变更；文档与证据随代码一起提交；不直接在其上开发长任务 |
-| `dev` | 集成分支 | 功能/移植分支先合入 `dev`，完成单变量验证后再合入 `main`；合并消息记录来源分支与验证结论 |
+| `nagatoquin33/UniXNU-diting` | `main` | 所有代码、配置、移植记录与证据直接在 `main` 线性提交并推送跑 CI；主机构建结论与真机实测结论必须在 `AGENTS.md` / `docs/STATUS.md` / `porting.toml` 明确区分 |
+| `nagatoquin33/UniXNU`（核心 fork） | `main` | 只保留 `main`（含 `121ea7f` / `0ce9779` 等全部构建钉版祖先）；严禁向上游 `UniXNU/UniXNU` 推送或提 PR |
 
 工作方式：
 
-1. 功能分支从 `dev`（或紧急修复从 `main`）切出，命名短描述（`fix/…`、`port/…`、`ci/…`），寿命以一次验证为限。
-2. 合并进 `dev` 后删除本地与远端功能分支；`dev` 仅保留未验证或未上机的集成内容。
-3. 通过验证后把 `dev` 合入 `main`（或把已验证提交 cherry-pick 到 `main`），并在 `AGENTS.md`/`docs/STATUS.md` 记录证据。
-4. 不进 `main` 的内容（如未上机的 ADT 官方路径、experimental GPU 变体）在 `dev` 中保持可复现，并在文档中标注“未合并/待验证”。
-5. 不建长期 personal/backup 分支；回退点用 commit/tag 记录，已合并或已废弃的分支删除。
-
-当前状态（2026-11-16 整理后）：
-
-- diting-ci：`main` @ `1b83f44`（稳定）、`dev` @ `03cb8b7`（集成；= main + `fix/adt-gen` + 分支策略文档）。
-- 核心 fork（`nagatoquin33/UniXNU`）：`main` @ `377f0ff`、`dev` @ `97e6c92`（= `fd2f4d1` + `feat/adt-arm-io` `8968f72`）；旧 `sync/*` 与 feature 分支已归档/删除，验证 pin 仍为 `fd2f4d1`（`dev` 的祖先）。
-- `dev` 已包含 `fix/adt-gen`（`ed18043`，含 `port/official-prelink` `5b4df48`）与官方 ADT 路径改动；核心 `feat/adt-arm-io` 已合入核心 `dev`，尚待设备 A/B 后再按 `merge-checklist.md` 并入 diting-ci `main`。
-- 已删除的远端分支：`fix/adt-gen`、`port/official-prelink`、`no-stall`（`12a8596`，未包含在 dev）、`ci/systemos-union`（`9628bd4`，未包含在 dev）、`ci/eacces-applog-fix`（`be630b9e`，已在 dev 历史中）。删除前 heads 记录于 `AGENTS.md`。
-- `dev` 未合入 `main`；`main` 的默认 ADT 路径仍是旧 binary-patch，直到设备 A/B 验证通过。
+1. 直接在 `main` 上推进单变量改动；推送自有仓前先通过本地门禁（`precheck-workflow.py`、`porting-record.py check`、构建/契约检查）。
+2. 允许直接 `git push origin main` 触发自有仓 GitHub Actions（`porting-record`、`package`、`diting-userdata`、`runtime-helper`），严禁向上游仓库 `push` 或提 PR。
+3. 回退点统一通过 commit SHA 与本地构建产物元数据记录，不再新建长期或临时远端分支。

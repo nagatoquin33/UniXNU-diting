@@ -1,6 +1,6 @@
 # Diting probe policy
 
-> 当前权威状态以 `D:\ai\diting\交接-2026-11-17-状态与下一步.md`、复制计划 `D:\ai\diting\build-work\evidence-20261117-copy-plan\PLAN.md` 与 [`docs/STATUS.md`](docs/STATUS.md) 为准（2026-11-11～11-16 的旧交接与执行计划已归档至 `D:\ai\diting\archive-20261112/` 与 `archive-20261117/`）。下方带日期的段落是历史实机与构建记录。
+> 当前权威状态以 `D:\ai\diting\交接-2026-11-18-真机进展与接续.md`、复制计划 `D:\ai\diting\build-work\evidence-20261117-copy-plan\PLAN.md` 与 [`docs/STATUS.md`](docs/STATUS.md) 为准（2026-11-11～11-16 的旧交接与执行计划已归档至 `D:\ai\diting\archive-20261112/` 与 `archive-20261117/`）。下方带日期的段落是历史实机与构建记录。
 
 # 社区优先与移植铁律（强制，优先于自研）
 
@@ -13,8 +13,8 @@ iOS/iPadOS 移植工作量极大，**严禁脱离官方与社区基线自己闭�
 2. **能整包抄/复用就绝不自造轮子或保留漂移分叉**：
    - 凡社区已在同芯片/同 OS ABI 跑通的模块，直接整包对齐其实现与构建配方（如 `zizhan` 的 `PongWifi` + `build-pong-ath11k.py`、`PongBattery` 的 `AppleSmartBattery` 与 `ShengBattmgr` 小米 +1 偏移、`PongRpmh` TCS4 投票、`UIKit.InProcessAnimationManager` 动画钩子），**只替换已由 Diting live DT/实机证实的板级常数**（GPIO、PMIC rail、SMMU SID、MSI INTID、保留区地址）。
    - 不得删掉上游已验证修复（如 `wait_event_timeout_once`、`adapt_dispatcher_timers`、`nw_wifi_rssi_limits`、`library_only_components` 预链接列表、`patch --forward`），不得凭猜测改硬件常量或加静默跳过逻辑。
-3. **禁止在 `patches/xnu-ipados18/` 堆叠 `zzzz…` 插队补丁**：补丁必须按语义序维护且每次重建先剥离衍生补丁；新增或修复只进 `dev` 或短命特性分支，未通过构建/门禁/真机对应验收前不得合入 `main`。
-4. **先主机验证再上机，不留失控分叉**：先跑通主机静态校验与离线合约检查（`check-loader-adt-contract.py`、`check-storage-bindings.py`、`porting-record.py`、host replay）；所有实验工作区随用随清，保留 `main`/`dev` 两条长期分支。
+3. **禁止在 `patches/xnu-ipados18/` 堆叠 `zzzz…` 插队补丁**：补丁必须按语义序维护且每次重建先剥离衍生补丁；自有仓统一只维护唯一分支 `main`（允许直接 `push` 跑 CI，禁止向上游 `UniXNU/UniXNU` 推送或提 PR），主机编译结论与真机验证结论严格分开记录。
+4. **先主机验证再上机，不留失控分叉**：先跑通主机静态校验与离线合约检查（`check-loader-adt-contract.py`、`check-storage-bindings.py`、`porting-record.py`、host replay）；所有实验工作区随用随清，只保留单分支 `main`。
 
 - Optional probes must record PASS, FAIL, SKIP or RUNNING and return to the normal boot path. Never terminate boot with panic, halt or an unbounded loop to display a probe result.
 - On failed prerequisites, log the reason and skip dependent MMIO/DMA work. Do not fabricate successful services, media or hardware resources to keep boot moving.
@@ -1818,3 +1818,20 @@ work is the boot itself, not the inputs.
 - **结论**：上述 6 项均为 `device-unverified`（host-build/静态校验通过，无任何真机日志）；`port/zizhan-sync` 已合入 `dev`（merge commit `7144282`），未合入 `main`。
 - **下一步**：先在 `dev` 上构建一张候选 boot 镜像并跑通三张主机门禁，再按「单变量、RAM-only `fastboot boot`」逐段上机（TCS0–4 探针 → 6 轨 + `diting_wifi_ipa=1` → 电池/GLINK → GPU fps）。
 - **限制**：userland dylib（`libditing-ui18` / Turnip 用户态）构建为 macOS-only（`xcrun --sdk iphoneos`），本机 host 无法验证。
+
+
+## 2026-11-18 — 候选内核真机进桌面、新 OS 窗口构建与单分支 main 收敛
+
+- **输入**：
+  - 真机启动镜像：`D:\ai\diting\build-work\diting-release-20261117.img`（101,187,584 B，sha256 `0d938372607f113bf4e197f9184af8814097497e1003c934acd61ee614f28862`；基线 `addon18`，仅替换 9 组件 library-only 预链接内核 `6aae196e…`）。
+  - 真机日志：`D:\ai\diting\build-work\ramoops-release-20261118.bin`（4,194,304 B，sha256 `20628c4bbc97ebe18d28c33e183a86375eb2a5e825131562c935e1470827b2de`）。
+  - 用户态提交：`bd5d0f1484185b92040e91698612604835bf50c5`（在 `userland/build-ipados18.py` 的 `jobs()` 接入 `metal_services18.configure(overlay)`）。
+- **观察（真机 `ramoops-release-20261118.bin`）**：
+  - 正常进入 iPadOS 18.7.10 桌面，无 panic；触控 `Diting touch latency: reports=1280 irq=1280 spurious=0 polls=10298 read_mean_us=156`。
+  - GPU：`DITING ADRENO`（CP_ME_INIT / PAS13 ZAP / CP ready）全部 `result=0`；`IOAcceleratorES` + `NativeAdreno` + Vulkan 设备创建 `status=0x0`；`actual GPU scanout copy completed status=0x0`；`[gpu cache] submits=8192 completed=8191`。
+  - Wi-Fi：`DitingWifi` `scans=5 BSS=44 frames=158`（42 信道扫出 44 个网络），`Preferences` 收到 `wifid` 扫描结果；尚无关联/DHCP（`en0 address none, in/out dhcp 0`）。
+  - 卡顿定位：全部 126 条 `EXC_RESOURCE` 均为 `cameracaptured` 每 5 秒建 128 MiB GPU VA 租约后触及 27 MB 上限被杀（`com.apple.jetsamproperties.J171/J172.plist` 中 `InactiveHardMemoryLimit=27` 且此前未调用 `metal_services18.configure`）。
+- **观察（主机与 CI `44203238062`）**：
+  - `diting-userdata` run `44203238062`（`bd5d0f1`）成功产出 `D:\ai\diting\artifacts\ci-44203238062\diting-ipados18-system.cdr`（6,845,104,128 B，sha256 `f07fb2525c29d5d9c29818c703c7eda072318fcd3a922951850d2af1df2ceed5`，根卷 UUID `B07DF049-7AD9-47B5-9F8F-9EE728056398`）。
+  - APFS 离线校验通过：`System/Library/xpc/launchd.plist` 与 `com.apple.cameracaptured.plist` 一致（`JetsamProperties=192`、`ThrottleInterval=30`）；`/diting/libditing-ui18.dylib`（175,488 B，sha256 `12b5a2c3…`）含 `UIKit.InProcessAnimationManager` 与 `display_link_rates`；`hardware_tested=false`（尚未写入手机 OS 窗口）。
+- **仓库整理**：按单分支策略将 `nagatoquin33/UniXNU-diting` 与 `nagatoquin33/UniXNU` 统一收敛为唯一分支 `main`（保留完整历史与 GitHub Actions Secrets，删除本地与远端 `dev` 及临时 `ci/*` 分支）。
