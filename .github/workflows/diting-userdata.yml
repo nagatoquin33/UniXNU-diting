@@ -18,10 +18,10 @@ on:
         type: string
         default: "https://updates.cdn-apple.com/2026WinterFCS/fullrestores/140-97953/5F3051CD-5405-4FEF-889E-C3B78E0F376F/iPhone11,8_18.7.10_22H374_Restore.ipsw"
       data_mib:
-        description: "Data APFS volume size in MiB (default: 24576 = 24 GiB)"
+        description: "Data APFS volume size in KiB (default: 33554432 = 32 GiB)"
         required: false
         type: string
-        default: "24576"
+        default: "33554432"
 
 permissions:
   contents: read

@@ -1256,10 +1256,10 @@ def apply(a):
         primelist.write_text('\n'.join(metallibs) + '\n')
         shader_changes = metal_services18.expand_framework_shaders(root, primelist)
         dump(out / 'shader-expand-report.json', shader_changes)
-        donor_root = os.environ.get('DITING_PHONE_DONOR_ROOT', '').strip()
-        donor_manifest = os.environ.get('DITING_PHONE_MANIFEST', '').strip()
+        donor_root = getattr(a, 'phone_donor_root', None)
+        donor_manifest = getattr(a, 'phone_manifest', None)
         if donor_root and donor_manifest:
-            phone_report = phone_components18.stage(root, Path(donor_root), Path(donor_manifest), out)
+            phone_report = phone_components18.stage(root, donor_root, donor_manifest, out)
             dump(out / 'phone-components-report.json', phone_report)
     finally:
         run(['hdiutil', 'detach', device])
@@ -1804,6 +1804,9 @@ def main():
     s.add_argument('--app-cryptex', type=Path)
     for name in ('apply', 'finish', 'rebuild_data', 'reset_data'):
         s = sub.add_parser(name); s.add_argument('--out', type=Path, required=True)
+        if name == 'apply':
+            s.add_argument('--phone-donor-root', type=Path)
+            s.add_argument('--phone-manifest', type=Path)
     s = sub.add_parser('helper'); s.add_argument('--out', type=Path, required=True)
     s.add_argument('--developer', type=Path, required=True)
     s = sub.add_parser('refresh_jobs'); s.add_argument('--out', type=Path, required=True)

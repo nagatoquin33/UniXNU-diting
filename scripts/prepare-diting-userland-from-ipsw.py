@@ -823,12 +823,10 @@ def main():
     # apply refuses a target that is the source file, so the two raw images
     # have to outlive this step; they are removed immediately afterwards.
     rec.stage('apply')
-    apply_cmd = list(root)
+    apply_cmd = root + [str(ROOT / 'userland/build-ipados18.py'), 'apply', '--out', str(out)]
     if args.phone_donor_root and args.phone_manifest:
-        apply_cmd += ['env',
-                      f'DITING_PHONE_DONOR_ROOT={args.phone_donor_root}',
-                      f'DITING_PHONE_MANIFEST={args.phone_manifest}']
-    apply_cmd += [str(ROOT / 'userland/build-ipados18.py'), 'apply', '--out', str(out)]
+        apply_cmd += ['--phone-donor-root', str(args.phone_donor_root),
+                      '--phone-manifest', str(args.phone_manifest)]
     rec.run('apply userland', apply_cmd)
     expect_file(out / 'apply-complete.json', 'apply', 2)
 
