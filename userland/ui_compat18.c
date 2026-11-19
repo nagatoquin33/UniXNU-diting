@@ -2034,6 +2034,48 @@ static void keyboard_defaults(void)
     fprintf(stderr,"Diting keyboard: native Pinyin/English/emoji defaults saved=%u\n",saved);
 }
 
+/* Setup is skipped on this port, leaving com.apple.assistant.support without
+ * Assistant Enabled / Dictation Enabled and com.apple.assistant.backedup
+ * without Session Language. On 22H374 UIKeyboard calls
+ * -[AFPreferences _languageCodeWithFallback:] in a tight main-thread loop
+ * (~1400/s) whenever a text field opens, hanging Preferences and swallowing
+ * key taps. Seed missing keys only; preserve any user choice. */
+static void assistant_defaults(void)
+{
+    const CFStringRef support=CFSTR("com.apple.assistant.support");
+    const CFStringRef backedup=CFSTR("com.apple.assistant.backedup");
+    bool support_changed=false, backedup_changed=false;
+    CFTypeRef v=CFPreferencesCopyValue(CFSTR("Assistant Enabled"),support,
+        kCFPreferencesCurrentUser,kCFPreferencesAnyHost);
+    if(!v) {
+        CFPreferencesSetValue(CFSTR("Assistant Enabled"),kCFBooleanFalse,support,
+            kCFPreferencesCurrentUser,kCFPreferencesAnyHost);
+        support_changed=true;
+    } else CFRelease(v);
+    v=CFPreferencesCopyValue(CFSTR("Dictation Enabled"),support,
+        kCFPreferencesCurrentUser,kCFPreferencesAnyHost);
+    if(!v) {
+        CFPreferencesSetValue(CFSTR("Dictation Enabled"),kCFBooleanFalse,support,
+            kCFPreferencesCurrentUser,kCFPreferencesAnyHost);
+        support_changed=true;
+    } else CFRelease(v);
+    if(support_changed) {
+        Boolean saved=CFPreferencesSynchronize(support,kCFPreferencesCurrentUser,kCFPreferencesAnyHost);
+        fprintf(stderr,"Diting keyboard: assistant/dictation defaults saved=%u\n",saved);
+    }
+    v=CFPreferencesCopyValue(CFSTR("Session Language"),backedup,
+        kCFPreferencesCurrentUser,kCFPreferencesAnyHost);
+    if(!v) {
+        CFPreferencesSetValue(CFSTR("Session Language"),CFSTR("zh-CN"),backedup,
+            kCFPreferencesCurrentUser,kCFPreferencesAnyHost);
+        backedup_changed=true;
+    } else CFRelease(v);
+    if(backedup_changed) {
+        Boolean saved=CFPreferencesSynchronize(backedup,kCFPreferencesCurrentUser,kCFPreferencesAnyHost);
+        fprintf(stderr,"Diting keyboard: assistant session language default saved=%u\n",saved);
+    }
+}
+
 static bool keyboard_native_scheduled;
 static bool keyboard_phone_installed;
 static void keyboard_retire_old_images(void)
@@ -2186,6 +2228,7 @@ __attribute__((constructor)) static void diting_ui18_start(void)
     const char *name=getprogname();
     if(!name)return;
     if(!strcmp(name,"InputUI")) {
+        assistant_defaults();
         char product[32]={};size_t length=sizeof(product);
         if(!sysctlbyname("hw.product",product,&length,NULL,0) && !strcmp(product,"iPhone17,1"))
             _dyld_register_func_for_add_image(keyboard_phone_image);
@@ -2201,7 +2244,7 @@ __attribute__((constructor)) static void diting_ui18_start(void)
     }
     if(!strcmp(name,"SpringBoard")) {
         keyboard_retire_old_images();
-        keyboard_defaults();_dyld_register_func_for_add_image(keyboard_native_image);
+        keyboard_defaults();assistant_defaults();_dyld_register_func_for_add_image(keyboard_native_image);
         diting_audio_volume18_start();
     }
     phone_ui_process=!strcmp(name,"Preferences") || !strcmp(name,"SpringBoard") || !strcmp(name,"MobilePhone");
@@ -2235,7 +2278,7 @@ __attribute__((constructor)) static void diting_ui18_start(void)
         _dyld_register_func_for_add_image(context_motion_image);
         return;
     }
-    if(strcmp(name,"Preferences")==0)diting_settings18_start();
+    if(strcmp(name,"Preferences")==0){assistant_defaults();diting_settings18_start();}
     // Keep SpringBoard/compositor adapters out of the poster renderer.
     // Only its native storage path and single-user identity are adapted.
     if(!strcmp(name,"PosterBoard")){

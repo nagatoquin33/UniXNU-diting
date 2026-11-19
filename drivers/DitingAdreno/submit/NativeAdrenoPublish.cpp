@@ -254,9 +254,32 @@ static NativeAdrenoClientRecord *clientRecord(const char *name)
     }
     return nullptr;
 }
+/* Boot-arg diting_gpu_deny=<name>[,<name>...] refuses those processes a GPU
+ * connection (proc_selfname, <=15 chars; "-" refuses nobody). Default refuses
+ * MercuryPosterEx (384 MiB FP16 VA hog / GPU-loss culprit) and cameracaptured
+ * (repeatedly opens 128 MiB VA leases and Jetsam-crashes every few seconds). */
+static bool deniedClient(const char *name)
+{
+    char list[128]="MercuryPosterEx,cameracaptured";
+    (void)PE_parse_boot_arg_str("diting_gpu_deny",list,sizeof list);
+    if(!list[0] || (list[0]=='-' && !list[1]))return false;
+    for(const char *p=list;*p;) {
+        const char *q=p;while(*q && *q!=',')++q;
+        const size_t n=size_t(q-p);
+        if(n && !strncmp(name,p,n) && !name[n])return true;
+        p=*q?q+1:q;
+    }
+    return false;
+}
 IOReturn AGXDeviceUserClient::mount(bool kernel)
 {
     proc_selfname(name_,sizeof name_);
+    if(!kernel && deniedClient(name_)) {
+        static uint32_t refused;
+        if(__atomic_fetch_add(&refused,1u,__ATOMIC_RELAXED)<16)
+            IOLog("DITING ADRENO: GPU connection refused to %s (diting_gpu_deny)\n",name_);
+        return kIOReturnNotPermitted;
+    }
     NativeAdrenoUserClient *core=new NativeAdrenoUserClient;
     if(!core)return kIOReturnNoMemory;
     IOLockLock(g.lock);

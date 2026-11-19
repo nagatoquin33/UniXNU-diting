@@ -777,7 +777,8 @@ def data_seed(image, root, overlay, out):
             # mode with setdefault. Preserve metadata from the restore.
             metadata.setdefault(p, [stat.S_IFDIR | (mode if i == len(parts) else 0o755), uid, gid])
     for name in ('com.apple.purplebuddy.plist', 'com.apple.purplebuddy.notbackedup.plist',
-                 'com.apple.springboard.plist', 'com.apple.migration.plist'):
+                 'com.apple.springboard.plist', 'com.apple.migration.plist',
+                 'com.apple.assistant.support.plist', 'com.apple.assistant.backedup.plist'):
         rel = 'mobile/Library/Preferences/' + name
         source = plistlib.loads((PROJECT / 'userland/var' / rel).read_bytes())
         target = data / rel

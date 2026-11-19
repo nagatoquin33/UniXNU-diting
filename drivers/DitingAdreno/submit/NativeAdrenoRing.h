@@ -105,6 +105,10 @@ public:
     uint32_t outstanding() const {return seqno_-completed_;}
     uint32_t lastSubmitted() const {return seqno_;}      /* the newest fence number handed out */
     uint32_t completedFence() const {return completed_;}
+    bool peekFence(uint32_t *value) {
+        if(!attached_ || poisoned_ || cache_.acquire(cache_.cookie,fence_,fence_bytes_))return false;
+        *value=fence_[1];return true;
+    }
     uint32_t submissions() const {return submissions_;}
     void setTimeline(bool enabled) {stamps_=enabled && fence_bytes_>=1536;}
     bool timeline(uint32_t fence,uint64_t *start,uint64_t *end);

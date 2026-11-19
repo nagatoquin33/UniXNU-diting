@@ -189,6 +189,7 @@ def main():
             backlight['maximum'], backlight['minimum_nonzero'],
             int(backlight['bl_inverted_dbv']), backlight['channel'], backlight['version'])),
         ('diting-audio-dma', bytes(16)),
+        ('diting-panel-pool', bytes(16)),
         ('darwinboot-memory-ranges', bytes(32 + 64 * 16)),
         ('diting-allocatable-ram', b''.join(
             struct.pack('<QQ', int(bank['base'], 0), int(bank['size'], 0))

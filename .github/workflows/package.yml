@@ -173,9 +173,8 @@ jobs:
               'lba_bytes': 4096,
               'os': {'uuid': root['os_volume_uuid']},
               'systemos': {'uuid': root['systemos_volume_uuid']},
-              # The Data UUID recorded from the generated userdata layout; the placeholder
-              # bf5d77f3-... is gone, so the kernel, the payload and this file agree.
-              'data': {'uuid': '337CF716-F62B-446B-B959-4A5F12A7701C'},
+              # Live 32 GiB GPT-wrapped APFS Data volume UUID on the device.
+              'data': {'uuid': 'B7FBCC5C-CFC2-4AF1-98F5-3D0D394EF2F0'},
           }
           Path(sys.argv[1]).write_text(json.dumps(layout, indent=2))
           # The UUIDs are compiled into the kernel (kern_exec selects the volumes by them), so

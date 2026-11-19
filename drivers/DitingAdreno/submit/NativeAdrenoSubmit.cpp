@@ -32,6 +32,17 @@ extern "C" {volatile uint32_t native_adreno_wc_audit[6];}
 extern "C" {volatile uint32_t native_adreno_fence_wait[8];}
 /* The IBs of the last submissions: [slot] fence, iova low/high, bytes, then the first 28 dwords of the first IB (read as the kernel maps it). */
 extern "C" {volatile uint32_t native_adreno_ib_log[4][4+28];volatile uint32_t native_adreno_ib_log_count;}
+static NativeAdrenoRing *gDitingGpuRing;
+extern "C" int diting_gpu_fences(uint32_t *submitted,uint32_t *retired)
+{
+    NativeAdrenoRing *ring=__atomic_load_n(&gDitingGpuRing,__ATOMIC_ACQUIRE);
+    if(!ring)return 0;
+    uint32_t v=0;
+    if(!ring->peekFence(&v))return 0;
+    *submitted=ring->lastSubmitted();
+    *retired=v;
+    return 1;
+}
 IOReturn NativeAdrenoSubmit::poison()
 {
     poisoned_=true;return kIOReturnIOError;
@@ -51,6 +62,7 @@ IOReturn NativeAdrenoSubmit::attach(NativeAdrenoVm *vm,NativeAdrenoRing *ring)
     if(attached_ || poisoned_ || vm_ || ring_)return kIOReturnBusy;
     if(!vm || !ring || vm->poisoned() || ring->poisoned())return kIOReturnBadArgument;
     vm_=vm;ring_=ring;attached_=true;stats_={};current_context_=UINT32_MAX;
+    __atomic_store_n(&gDitingGpuRing,ring,__ATOMIC_RELEASE);
     return kIOReturnSuccess;
 }
 IOReturn NativeAdrenoSubmit::release(Job &job)
@@ -104,6 +116,7 @@ IOReturn NativeAdrenoSubmit::detach()
 {
     if(poisoned_ || outstanding())return kIOReturnBusy;
     if(!attached_)return kIOReturnNotReady;
+    __atomic_store_n(&gDitingGpuRing,(NativeAdrenoRing *)nullptr,__ATOMIC_RELEASE);
     attached_=false;vm_=nullptr;ring_=nullptr;return kIOReturnSuccess;
 }
 bool NativeAdrenoSubmit::queueOutstanding(uint32_t queue) const

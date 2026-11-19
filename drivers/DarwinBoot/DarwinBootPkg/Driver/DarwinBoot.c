@@ -684,6 +684,31 @@ FindOutsideTable (CONST UINT8 *Tree, UINTN TreeSize, UINTN *TableOffset, UINTN *
   return FALSE;
 }
 
+// Diting zero-copy panel pool below 4 GiB (32-bit DPU SSPP_SRC0_ADDR, display
+// SMMU untranslated): up to 112 MiB (8 x 14 MiB slots for 1220x2712 at 5120 B/row).
+#define PANEL_POOL_PAGES_112M 28672
+#define PANEL_POOL_PAGES_96M  24576
+#define PANEL_POOL_PAGES_64M  16384
+
+STATIC
+BOOLEAN
+FindPanelPool (CONST UINT8 *Tree, UINTN TreeSize, UINTN *PoolOffset)
+{
+  STATIC CONST CHAR8  Name[32] = "diting-panel-pool";
+  UINTN               Offset;
+  UINT32              Length;
+
+  for (Offset = 0; Offset + 36 <= TreeSize; Offset += 4) {
+    if (CompareMem (Tree + Offset, Name, sizeof (Name)) != 0) { continue; }
+    Length = ReadUnaligned32 ((CONST UINT32 *)(Tree + Offset + 32)) & 0x7fffffff;
+    if ((Length != 16) || (Length > TreeSize - Offset - 36) ||
+        !IsZeroBuffer (Tree + Offset + 36, Length)) { return FALSE; }
+    *PoolOffset = Offset + 36;
+    return TRUE;
+  }
+  return FALSE;
+}
+
 // Fill the device tree's table from a memory map and report the usable bytes as the memory size. FALSE when the
 // head is no longer whole, which the head allocation rules out.
 STATIC
@@ -825,6 +850,9 @@ Boot (
   UINTN                           OutsideCapacity;
   UINTN                           OutsideCount;
   UINT64                          OutsideBytes;
+  UINTN                           PanelPoolOffset;
+  EFI_PHYSICAL_ADDRESS            PanelAddress;
+  UINTN                           PanelPages;
   DARWIN_LOADER_INPUT             Inputs[DARWIN_INPUT_COUNT];
 
   (VOID)This;
@@ -891,7 +919,11 @@ Boot (
   InputsOffset = MAX_UINTN;
   OutsideOffset = MAX_UINTN;
   OutsideCapacity = 0;
+  PanelPoolOffset = MAX_UINTN;
+  PanelAddress = 0;
+  PanelPages = 0;
   if (!FindOutsideTable (Tree, TreeSize, &OutsideOffset, &OutsideCapacity)) { OutsideOffset = MAX_UINTN; }
+  if (!FindPanelPool (Tree, TreeSize, &PanelPoolOffset)) { PanelPoolOffset = MAX_UINTN; }
   if (!AdtNode (Tree, TreeSize, &Offset, 0, 3, &RamdiskOffset, &TrustCacheOffset, &AddonOffset, &PolicyOffset, &WindowSize, &KeepPacked, &ExcludedOffset, &ExcludedCapacity, &InputsOffset) || (Offset != TreeSize)) { Status = EFI_COMPROMISED_DATA; goto Fail; }
   if (KeepPacked && (!RamdiskPacked || (RamdiskOffset == MAX_UINTN))) { Status = EFI_COMPROMISED_DATA; goto Fail; }
   if (WindowSize == 0) { WindowSize = WINDOW_SIZE; }
@@ -1025,6 +1057,26 @@ Boot (
   FreePool (Image); Image = NULL;
   FreePool (Tree); Tree = NULL;
   FreePool (TreePath); TreePath = NULL;
+  if (PanelPoolOffset != MAX_UINTN) {
+    STATIC CONST UINTN TryPages[3] = { PANEL_POOL_PAGES_112M, PANEL_POOL_PAGES_96M, PANEL_POOL_PAGES_64M };
+    for (Index = 0; Index < 3; Index++) {
+      PanelAddress = 0xffffffffULL;
+      Status = gBS->AllocatePages (AllocateMaxAddress, EfiReservedMemoryType, TryPages[Index], &PanelAddress);
+      if (!EFI_ERROR (Status)) {
+        PanelPages = TryPages[Index];
+        ZeroMem ((VOID *)(UINTN)PanelAddress, EFI_PAGES_TO_SIZE (PanelPages));
+        DarwinFlush (PanelAddress, EFI_PAGES_TO_SIZE (PanelPages));
+        Print (L"DARWINBOOT: panel pool PASS 0x%lx, %lu pages\n", PanelAddress, (UINT64)PanelPages);
+        break;
+      }
+      PanelAddress = 0;
+    }
+    if (PanelAddress == 0) {
+      Print (L"DARWINBOOT: panel pool SKIP %r\n", Status);
+    }
+    WriteUnaligned64 ((UINT64 *)(UINTN)(TreeAddress + PanelPoolOffset), PanelAddress);
+    WriteUnaligned64 ((UINT64 *)(UINTN)(TreeAddress + PanelPoolOffset + 8), PanelAddress ? EFI_PAGES_TO_SIZE (PanelPages) : 0);
+  }
   Root->Close (Root); Root = NULL;
   // Every file is read; the block device is asked once more, and only for a tree that wants the record.
   if (InputsOffset != MAX_UINTN) { LocateInputs (Request, Inputs); }
@@ -1154,6 +1206,7 @@ Fail:
   if (Policies != NULL) { FreePool (Policies); }
   if (TreePath != NULL) { FreePool (TreePath); }
   if (Map != NULL) { FreePool (Map); }
+  if (PanelAddress != 0) { gBS->FreePages (PanelAddress, PanelPages); }
   if (Address != 0) { gBS->FreePages (Address, EFI_SIZE_TO_PAGES (Allocated)); }
   Print (L"DARWINBOOT: boot refused: %r; firmware retained\n", Status);
   return Status;

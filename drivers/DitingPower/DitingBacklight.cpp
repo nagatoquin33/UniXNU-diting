@@ -16,6 +16,7 @@
 #include <libkern/OSKextLib.h>
 #include <mach/kmod.h>
 #include <pexpert/pexpert.h>
+#include "DitingDsiLease.h"
 
 extern kmod_info_t g_kernel_kmod_info;
 extern "C" void DitingBacklightStaticInit(void);
@@ -24,6 +25,7 @@ class DitingBacklight;
 namespace {
 DitingBacklight *gPublishedBacklight;
 const OSMetaClass *gAppleBacklightClass;
+uint32_t gLocalDsiLease;
 enum : uint32_t {
     Version = 0x000, Control = 0x004, Status = 0x008,
     DmaControl = 0x03c, DmaLength = 0x04c, AckError = 0x068,
@@ -58,9 +60,10 @@ class DitingBacklight : public IOService {
     IOTimerEventSource *timer = nullptr;
     const OSMetaClass *appleClass = nullptr;
     bool published = false, stopped = false, inFlight = false;
+    bool leaseHeld = false, leaseBusy = false;
     bool needVerification = false;
     bool lowPowerWrite = true, retriedWrite = false;
-    uint64_t verifyAfter = 0;
+    uint64_t verifyAfter = 0, leaseDeadline = 0;
     enum Operation { SetReadSize, ReadInitial, WriteLevel, ReadVerify } operation = ReadInitial;
     Operation pendingRead = ReadInitial;
     uint32_t readQuantum = 1;
@@ -89,13 +92,37 @@ class DitingBacklight : public IOService {
         // Preserve interrupt masks, W1C only our command/BTA completions.
         wr(InterruptControl, (rd(InterruptControl) & EnableMask) | DmaDone | BtaDone);
     }
+    bool acquireEngine() {
+        leaseBusy = false;
+        const bool acquired = diting_dsi_try_acquire(DitingDsiBacklight);
+        if (!acquired) {
+            if (!leaseDeadline) leaseDeadline = nowNs() + 500000000ULL;
+            leaseBusy = nowNs() < leaseDeadline;
+            return false;
+        }
+        leaseHeld = true; leaseDeadline = 0; return true;
+    }
+    void releaseEngine() {
+        if (!leaseHeld) return;
+        const bool released = diting_dsi_release(DitingDsiBacklight);
+        leaseHeld = false;
+        if (!released) {
+            __atomic_store_n(&stopped, true, __ATOMIC_RELEASE);
+            IOLog("DitingBacklight: DSI lease ownership mismatch; stopped\n");
+        }
+    }
+    bool deferForLease() {
+        if (!leaseBusy) return false;
+        timer->setTimeoutMS(1); return true;
+    }
     bool canBegin() const {
         return !inFlight && !__atomic_load_n(&stopped, __ATOMIC_ACQUIRE) &&
             !(rd(Status) & DmaBusy) && !(rd(PatternControl) & 1u) &&
             (rd(Control) & 1u) && !(rd(InterruptControl) & ErrorPending);
     }
     bool beginTransaction(const uint32_t *words, unsigned count, bool lowPower) {
-        if (!canBegin()) return false;
+        if (!acquireEngine()) return false;
+        if (!canBegin()) { releaseEngine(); return false; }
         savedDma = rd(DmaControl); savedLength = rd(DmaLength);
         savedTrigger = rd(TriggerControl); savedPattern = rd(PatternControl);
         savedControl = rd(Control);
@@ -126,9 +153,9 @@ class DitingBacklight : public IOService {
         wr(TriggerControl, savedTrigger); wr(PatternControl, savedPattern);
         wr(Control, savedControl);
         inFlight = false;
+        releaseEngine();
     }
     bool startRead(Operation next) {
-        if (!canBegin()) return false;
         // DSI resets to a one-byte return limit. Negotiate two bytes as a
         // separate short packet (bit 6 means LONG, not a short-packet flag).
         // Complete it before resetting readback and issuing the BTA query.
@@ -139,7 +166,10 @@ class DitingBacklight : public IOService {
     }
     bool startQuery() {
         const uint32_t words[] = {0xa0060052u};
+        if (!acquireEngine()) return false;
+        if (!canBegin()) { releaseEngine(); return false; }
         wr(ReadControl, 1); wr(ReadControl, 0);
+        releaseEngine();
         if (!beginTransaction(words, 1, true)) return false;
         operation = pendingRead;
         return true;
@@ -263,7 +293,10 @@ class DitingBacklight : public IOService {
                 return;
             }
             if (operation == SetReadSize) {
-                if (!startQuery()) { fail("DSI BTA engine unavailable"); return; }
+                if (!startQuery()) {
+                    if (deferForLease()) return;
+                    fail("DSI BTA engine unavailable"); return;
+                }
                 timer->setTimeoutMS(1); return;
             } else if (operation == WriteLevel) {
                 writes++; needVerification = true;
@@ -303,11 +336,17 @@ class DitingBacklight : public IOService {
         }
         if (needVerification) {
             if (nowNs() < verifyAfter) { timer->setTimeoutMS(2); return; }
-            if (!startRead(ReadVerify)) { fail("DSI readback engine unavailable"); return; }
+            if (!startRead(ReadVerify)) {
+                if (deferForLease()) return;
+                fail("DSI readback engine unavailable"); return;
+            }
             timer->setTimeoutMS(1); return;
         }
         if (!published) {
-            if (!startRead(ReadInitial)) { fail("DSI engine not ready at handoff"); return; }
+            if (!startRead(ReadInitial)) {
+                if (deferForLease()) return;
+                fail("DSI engine not ready at handoff"); return;
+            }
             timer->setTimeoutMS(1); return;
         }
         const uint64_t elapsed = nowNs() - fadeStart;
@@ -319,7 +358,10 @@ class DitingBacklight : public IOService {
             sending = next;
             const uint32_t wire = encodedLevel(next);
             const uint32_t words[] = {0xc0390003u, 0xff000051u | (wire << 8)};
-            if (!beginTransaction(words, 2, lowPowerWrite)) { fail("DSI write engine unavailable"); return; }
+            if (!beginTransaction(words, 2, lowPowerWrite)) {
+                if (deferForLease()) return;
+                fail("DSI write engine unavailable"); return;
+            }
             operation = WriteLevel;
             timer->setTimeoutMS(1);
         } else if (next != goal) timer->setTimeoutMS(16);
@@ -403,6 +445,12 @@ const OSMetaClass *DitingBacklight::getMetaClass() const {
 OSMetaClassConstructorInit(DitingBacklight, IOService, )
 OSDefineDefaultStructors(DitingBacklight, IOService)
 
+extern "C" bool diting_dsi_try_acquire(uint32_t owner) {
+    return diting_dsi_lease_try(&gLocalDsiLease, owner);
+}
+extern "C" bool diting_dsi_release(uint32_t owner) {
+    return diting_dsi_lease_release(&gLocalDsiLease, owner);
+}
 extern "C" void diting_backlight_start(IOService *display) {
     static DitingBacklight *backlight;
     static bool registered;

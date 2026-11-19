@@ -1,0 +1,294 @@
+diting: zero-copy DPU panel-pool canvases, async flip latch polling in SwapWait,
+CPU-frame DPU restore, and bounded panel-slot map diagnostics.
+
+diff -ruN a/iokit/Kernel/IOMemoryDescriptor.cpp b/iokit/Kernel/IOMemoryDescriptor.cpp
+--- a/iokit/Kernel/IOMemoryDescriptor.cpp	2026-11-19 09:02:00.057900624 +0800
++++ b/iokit/Kernel/IOMemoryDescriptor.cpp	2026-11-19 09:02:00.061900624 +0800
+@@ -4919,6 +4919,20 @@
+ 	return mapping;
+ }
+ 
++#if XNU_DITING_ADRENO_PLATFORM
++extern "C" bool diting_panel_slot_range(uint64_t phys, uint64_t bytes);
++extern "C" void diting_ramoops_diagnostic_write(const char *, int);
++static void diting_panel_map_error(const char *phase, IOReturn error, uint64_t physical, uint64_t bytes, IOOptionBits options, bool kernel)
++{
++    static unsigned failures;
++    if (!diting_panel_slot_range(physical, bytes) || __atomic_fetch_add(&failures, 1u, __ATOMIC_RELAXED) >= 16) return;
++    char line[220];
++    int n = snprintf(line, sizeof line, "DITING POOL %s: error=0x%x phys=0x%llx bytes=%llu kernel=%u options=0x%x\n",
++        phase, error, physical, bytes, kernel, (unsigned)options);
++    if (n > 0) { IOLog("%s", line); diting_ramoops_diagnostic_write(line, n < (int)sizeof line ? n : (int)sizeof line - 1); }
++}
++#endif
++
+ IOReturn
+ IOGeneralMemoryDescriptor::doMap(
+ 	vm_map_t                __addressMap,
+@@ -5303,6 +5317,9 @@
+ 			    (vm_map_offset_t)0);
+ 
+ 			if (KERN_SUCCESS != err) {
++#if XNU_DITING_ADRENO_PLATFORM
++                diting_panel_map_error("VMFAULT", err, physAddr, segLen, options, true);
++#endif
+ 				break;
+ 			}
+ 		}
+@@ -5996,6 +6013,11 @@
+ 			mapDesc->addMapping(result);
+ 			result->setMemoryDescriptor(mapDesc.get(), offset);
+ 		} else {
++#if XNU_DITING_ADRENO_PLATFORM
++            IOByteCount span = 0;
++            const addr64_t physical = mapDesc->getPhysicalSegment(offset, &span, kIOMemoryMapperNone);
++            diting_panel_map_error("MAP", kr, physical, length, options, mapping->fAddressMap == kernel_map);
++#endif
+ 			mapping->release();
+ 			mapping = NULL;
+ 		}
+diff -ruN a/iokit/Kernel/MiniIOMobileFramebuffer.cpp b/iokit/Kernel/MiniIOMobileFramebuffer.cpp
+--- a/iokit/Kernel/MiniIOMobileFramebuffer.cpp	2026-11-19 09:02:00.061900624 +0800
++++ b/iokit/Kernel/MiniIOMobileFramebuffer.cpp	2026-11-19 09:02:00.061900624 +0800
+@@ -53,6 +53,9 @@
+ 
+ extern "C" bool diting_scanout_quarantined(void);
+ extern "C" void diting_scanout_idle(void);
++extern "C" void diting_scanout_cpu_frame(void);
++extern "C" void diting_scanout_set_tag(uint32_t);
++extern "C" uint32_t diting_scanout_latch_poll(void);
+ #endif
+ #if XNU_DITING_BACKLIGHT
+ extern "C" void diting_backlight_start(IOService *display);
+@@ -244,6 +247,9 @@
+ 	MiniIOSurface * fSwapSurfaces[SWAP_QUEUE][SWAP_LAYERS]; /* ... their surfaces, held from SwapEnd on: their maker may let go of them */
+ 	unsigned        fSwapFirst, fSwapsWaiting;
+ 	struct {uint32_t id;IOReturn result;} fRetired[64];
++	uint32_t        fEndedID, fPresentedID, fRetiredID;
++	bool            fLatchAsync;
++	void            swapPresentedLocked(uint32_t id);
+ 	IOReturn waitSwap(uint32_t id,uint32_t flags,uint64_t timeout);
+ 	/*
+ 	 * ... and not whenever the GPU happens to be done, but on a beat of the refresh rate
+@@ -892,11 +898,13 @@
+ 	IOLockLock(fSwapLock);
+ 	fStatSwapsLate += fSwapTime != 0 && now - fSwapTime > period && now - fSwapTime < pause;
+ 	fSwapTime = now;
++	fEndedID = swapWord(swap, SWAP_ID);
+ 	fStatHeld += fSwapsWaiting >= swapQueue();
+ 	while (fSwapsWaiting >= swapQueue()) {
+ 		if (IOLockSleepDeadline(fSwapLock, &fSwapsWaiting, deadline, THREAD_UNINT) == THREAD_TIMED_OUT &&
+ 		    fSwapsWaiting >= swapQueue()) {
+ 			fStatLost++;                    /* (the GPU has stopped answering: the frame before is waiting for it) */
++			swapPresentedLocked(swapWord(swap, SWAP_ID));
+ 			IOLockUnlock(fSwapLock);
+ 			return kIOReturnTimeout;
+ 		}
+@@ -919,23 +927,52 @@
+  * the first SwapBegin. Zero means the queued work, not an invalid frame.
+  * High-bit flags are readiness polls (can_update expects Busy); they must
+  * never sleep for a future frame and stall the render server. */
++void IOMobileFramebuffer::swapPresentedLocked(uint32_t id)
++{
++    if(id!=0 && (int32_t)(id-fPresentedID)>0) {
++        fRetiredID=id-1;
++        fPresentedID=id;
++        IOLockWakeup(fSwapLock,&fSwapsWaiting,false);
++    }
++}
++
+ IOReturn IOMobileFramebuffer::waitSwap(uint32_t id,uint32_t flags,uint64_t timeout)
+ {
++    const bool drain=(id==0);
++    const bool query=(flags&0x80000000u)!=0;
++    const bool presentedIsEnough=drain || ((flags&1u)!=0);
++    const uint32_t maxMs=drain?1000u:50u;
+     uint64_t deadline;
+-    clock_interval_to_deadline((uint32_t)(timeout && timeout<1000?timeout:1000),kMillisecondScale,&deadline);
++    clock_interval_to_deadline((uint32_t)(timeout && timeout<maxMs?timeout:maxMs),kMillisecondScale,&deadline);
+     IOLockLock(fSwapLock);
+     if(!id) {
+         if(!fSwapsWaiting){IOLockUnlock(fSwapLock);return kIOReturnSuccess;}
+         const unsigned last=(fSwapFirst+fSwapsWaiting-1)%SWAP_QUEUE;
+         id=swapWord(fSwap[last],SWAP_ID);
+     }
+-    while(fRetired[id%64].id!=id) {
+-        if(flags&0x80000000u){IOLockUnlock(fSwapLock);return kIOReturnBusy;}
++    for(;;) {
++#if XNU_DITING_ADRENO_PLATFORM
++        if(fLatchAsync) {
++            const uint32_t latched=diting_scanout_latch_poll();
++            if(latched!=0)swapPresentedLocked(latched);
++        }
++#endif
++        if((int32_t)(id-fEndedID)>0){IOLockUnlock(fSwapLock);return kIOReturnSuccess;}
++        if(fRetired[id%64].id==id && fRetired[id%64].result!=kIOReturnSuccess) {
++            IOReturn result=fRetired[id%64].result;IOLockUnlock(fSwapLock);return result;
++        }
++        const uint32_t mark=presentedIsEnough?fPresentedID:fRetiredID;
++        if((int32_t)(mark-id)>=0){IOLockUnlock(fSwapLock);return kIOReturnSuccess;}
++        if(query){IOLockUnlock(fSwapLock);return kIOReturnBusy;}
++        if(fLatchAsync && mach_absolute_time()<deadline) {
++            uint64_t soon;
++            clock_interval_to_deadline(1,kMillisecondScale,&soon);
++            if(IOLockSleepDeadline(fSwapLock,&fSwapsWaiting,soon<deadline?soon:deadline,THREAD_ABORTSAFE)!=THREAD_INTERRUPTED)continue;
++        }
+         if(IOLockSleepDeadline(fSwapLock,&fSwapsWaiting,deadline,THREAD_ABORTSAFE)!=THREAD_AWAKENED) {
+             IOLockUnlock(fSwapLock);return kIOReturnTimeout;
+         }
+     }
+-    IOReturn result=fRetired[id%64].result;IOLockUnlock(fSwapLock);return result;
+ }
+ 
+ void
+@@ -962,6 +999,7 @@
+         IOLockLock(fSwapLock);
+         const uint32_t id=swapWord(swap,SWAP_ID);
+         fRetired[id%64]={id,result};
++        if(!fLatchAsync || result!=kIOReturnSuccess)swapPresentedLocked(id);
+         fSwapFirst=(fSwapFirst+1)%SWAP_QUEUE;--fSwapsWaiting;
+         IOLockWakeup(fSwapLock,&fSwapsWaiting,false);
+         IOLockUnlock(fSwapLock);
+@@ -1055,6 +1093,7 @@
+ 	 * unscaled layer; other layouts use CPU composition unless explicitly disabled.
+ 	 * No CPU writes may race an outstanding GPU copy after a timeout. */
+ 	bool gpuFrame=false;
++	fLatchAsync=false;
+ #if XNU_DITING_ADRENO_PLATFORM
+ 	if(!swapWord(swap,SWAP_SURFACE(0)) && !swapWord(swap,SWAP_SURFACE(1)) &&
+ 	   !swapWord(swap,SWAP_SURFACE(2)) && !swapWord(swap,SWAP_SURFACE(3)))diting_scanout_idle();
+@@ -1072,7 +1111,10 @@
+ 		IOMemoryDescriptor *memory=base->client?base->client:base->memory;
+ 		size_t offset=(size_t)(base->pixels()-(base->client?base->kpixels:base->kbase));
+ 		beginGraphics();
+-		gpuFrame=diting_scanout_frame(memory,offset,base->info.bytesPerRow,fPanelWidth,fPanelHeight)==1;
++		diting_scanout_set_tag(swapWord(swap,SWAP_ID));
++		const int scanned=diting_scanout_frame(memory,offset,base->info.bytesPerRow,fPanelWidth,fPanelHeight);
++		gpuFrame=(scanned==1 || scanned==3);
++		fLatchAsync=(scanned==3);
+         ditingDisplayTrace(20,swapWord(swap,SWAP_ID),gpuFrame?4:8,swapWord(swap,SWAP_SURFACE(0)),fPanelWidth,fPanelHeight,base->info.bytesPerRow);
+ 	}
+ 	/* A delivered GPU copy whose completion is uncertain must never race a
+@@ -1084,6 +1126,9 @@
+ 		if(missed++<4)IOLog("DITING GPU ONLY: no completed GPU frame; CPU composition disabled\n");
+ 		IOLockUnlock(fLock);return kIOReturnNotReady;
+ 	}
++#if XNU_DITING_ADRENO_PLATFORM
++	if(!gpuFrame)diting_scanout_cpu_frame();
++#endif
+ 
+ 	for (unsigned layer = 0; layer < SWAP_LAYERS; layer++) {
+ 		uint32_t sid = swapWord(swap, SWAP_SURFACE(layer));
+diff -ruN a/iokit/Kernel/MiniIOSurface.cpp b/iokit/Kernel/MiniIOSurface.cpp
+--- a/iokit/Kernel/MiniIOSurface.cpp	2026-11-19 09:02:00.057900624 +0800
++++ b/iokit/Kernel/MiniIOSurface.cpp	2026-11-19 09:02:00.061900624 +0800
+@@ -34,6 +34,13 @@
+ #include <sys/proc.h>
+ 
+ #include "MiniIOSurface.h"
++#if XNU_DITING_ADRENO_PLATFORM
++extern "C" int diting_panel_slot_take(uint32_t width, uint32_t height, uint32_t bytesPerRow, uint32_t bytes, uint64_t * phys);
++extern "C" void diting_panel_slot_give(uint64_t phys);
++extern "C" IOMemoryDescriptor * diting_panel_slot_memory(uint64_t phys, uint32_t bytes);
++extern "C" uint64_t diting_panel_slot_address(uint64_t phys);
++static unsigned gSlotMisses;
++#endif
+ 
+ static_assert(sizeof(struct minisurf_plane) == 0x80, "plane layout");
+ static_assert(sizeof(struct minisurf_result) == 0x68, "result layout");
+@@ -355,6 +362,12 @@
+ 		client->release();
+ 		client = NULL;
+ 	}
++#if XNU_DITING_ADRENO_PLATFORM
++	if (slotPhys != 0) {
++		diting_panel_slot_give(slotPhys);
++		slotPhys = 0;
++	}
++#endif
+ 	if (clientTask != TASK_NULL) {
+ 		task_deallocate(clientTask);
+ 		clientTask = TASK_NULL;
+@@ -748,7 +761,27 @@
+ 		}
+ 	}
+ 
+-	s->memory = surfaceMemory((vm_size_t) PAGE_SIZE + (wrapped ? 0 : alloc));
++	uint64_t slotPhys = 0;
++#if XNU_DITING_ADRENO_PLATFORM
++	if (wrapped == NULL && planeCount == 0 && offset == 0 && format == 'BGRA' && bpe == 4) {
++		char who[32] = {};
++		proc_selfname(who, sizeof(who));
++		if ((strcmp(who, "backboardd") == 0 || strcmp(who, "kernel_task") == 0) &&
++		    diting_panel_slot_take(width, height, bpr, alloc, &slotPhys) == 1) {
++			s->slotPhys = slotPhys;
++		} else {
++			slotPhys = 0;
++		}
++	}
++	if (slotPhys == 0 && width >= 1000 && height >= 2000 && gSlotMisses++ < 8) {
++		char who[32] = {};
++		proc_selfname(who, sizeof(who));
++		IOLog("MiniIOSurface: %s surface %ux%u '%.4s' bpe %u bpr %u offset %u planes %u alloc %u%s: no panel slot\n",
++		    who, width, height, (const char *) &format, bpe, bpr, offset, planeCount, alloc,
++		    wrapped != NULL ? " (wrapped client memory)" : "");
++	}
++#endif
++	s->memory = surfaceMemory((vm_size_t) PAGE_SIZE + ((wrapped != NULL || slotPhys != 0) ? 0 : alloc));
+ 	if (s->memory == NULL) {
+ 		IOLog("MiniIOSurface: no memory for %u bytes (%u surfaces, %llu MB in use)\n", alloc, gSurfaceCount,
+ 		    gSurfaceBytes >> 20);
+@@ -764,6 +797,30 @@
+ 		return NULL;
+ 	}
+ 	s->kpixels = s->kbase + PAGE_SIZE;
++#if XNU_DITING_ADRENO_PLATFORM
++	if (slotPhys != 0) {
++		s->client = diting_panel_slot_memory(slotPhys, alloc);
++		IOReturn held = s->client != NULL ? s->client->prepare() : kIOReturnNoMemory;
++		if (held == kIOReturnSuccess) {
++			s->clientMap = s->client->createMappingInTask(kernel_task, 0, kIOMapAnywhere | kIOMapCopybackCache);
++		} else {
++			OSSafeReleaseNULL(s->client);
++		}
++		if (s->clientMap == NULL) {
++			IOLog("MiniIOSurface: panel slot %#llx cannot be mapped (%#x)\n", slotPhys, held);
++			s->release();
++			*error = kIOReturnVMError;
++			return NULL;
++		}
++		s->kpixels = (uint8_t *) s->clientMap->getVirtualAddress();
++		static unsigned mapped;
++		if (__atomic_fetch_add(&mapped, 1u, __ATOMIC_RELAXED) < 16) {
++			IOLog("MiniIOSurface: panel cached kernel map reused=%u bytes=%u\n",
++			    (uint64_t) s->kpixels == diting_panel_slot_address(slotPhys), alloc);
++		}
++		IOLog("MiniIOSurface: backboardd canvas %ux%u bpr %u (%u bytes) in panel slot %#llx\n", width, height, bpr, alloc, slotPhys);
++	}
++#endif
+ 	if (wrapped != NULL) {
+ 		s->clientTask = current_task();
+ 		task_reference(s->clientTask);
+@@ -1211,6 +1268,11 @@
+ 	}
+ 	if (surface->client != NULL && surface->clientTask != fTask) {
+ 		IOOptionBits pixelOptions = kIOMapAnywhere;
++#if XNU_DITING_ADRENO_PLATFORM
++		if (surface->slotPhys != 0) {
++			pixelOptions |= kIOMapCopybackCache;
++		}
++#endif
+ 		if (surface->client->getDirection() == kIODirectionOut) {
+ 			/* A read-only image can be shared for reading. Darwin24 must
+ 			 * not be asked to create a writable foreign mapping for it. */
+diff -ruN a/iokit/Kernel/MiniIOSurface.h b/iokit/Kernel/MiniIOSurface.h
+--- a/iokit/Kernel/MiniIOSurface.h	2026-11-19 09:02:00.057900624 +0800
++++ b/iokit/Kernel/MiniIOSurface.h	2026-11-19 09:02:00.061900624 +0800
+@@ -118,6 +118,7 @@
+ 	IOMemoryMap *                   clientMap;
+ 	task_t                          clientTask;     /* retained owner of wrapped pixel memory */
+ 	mach_vm_address_t               clientAddress;  /* ... and where it is there */
++	uint64_t                        slotPhys;       /* loader-reserved panel-pool slot physical address */
+ 	uint8_t *                       kpixels;        /* where the pixel memory starts in the kernel, either way */
+ 	uint32_t                        gpuWriters, displayReaders;
+ 	bool                            gpuFailed;
