@@ -1,8 +1,8 @@
 /* SPDX-License-Identifier: BSD-2-Clause-Patent */
 /* Diting display scanout: zero-copy DPU page-flipping over loader-reserved
- * low-RAM panel-pool canvas slots + HS-mode 120 Hz DCS timing switch for the
- * Xiaomi 36-02-0b panel, while preserving the v2 userspace presenter fallback
- * ABI (DitingScanoutWire.h) untouched. */
+ * low-RAM panel-pool canvas slots + HS-mode 120 Hz DCS timing switch for
+ * Xiaomi 42-02-0a (default) and 36-02-0b panels, while preserving the v2
+ * userspace presenter fallback ABI (DitingScanoutWire.h) untouched. */
 #include "DitingAdrenoScanout.h"
 #include "../DitingPower/DitingDsiLease.h"
 #define NATIVE_GPU_TRACE_OPTIONAL
@@ -132,7 +132,7 @@ int slotDb[SlotMax];
 IOMemoryDescriptor *slotMemory[SlotMax];
 IOMemoryMap *slotMapping[SlotMax];
 unsigned slotCount=0,slotTaken=0,slotRefused=0;
-uint32_t slotBytes=0,zc=0,zcAsync=1,slotPreMap=1;
+uint32_t slotBytes=0,zc=0,zcAsync=0,slotPreMap=1;
 IOSimpleLock *slotLock=nullptr;
 
 uint64_t zcFrames=0,zcInPlace=0,zcFenceUs=0,zcFenceMaxUs=0,zcFenceTimeouts=0;
@@ -219,9 +219,9 @@ void dbFlip(int i)
     }
 }
 
-/* Xiaomi 36-02-0b (qcom,mdss_dsi_l12_36_02_0b_dsc_cmd) HS-mode DCS refresh-rate
- * switch sets, verbatim from platform-firmware/diting-live.dts timing@1 (120 Hz)
- * and timing@0 (60 Hz). Geometry, DSC, porches and 1.1 GHz DSI clock are shared. */
+/* Panel HS-mode DCS refresh-rate switch sets, verbatim from
+ * platform-firmware/diting-live.dts (42_02_0a default; 36_02_0b via
+ * diting_panel=36). Both share geometry, DSC, porches and 1.1 GHz DSI clock. */
 enum : uint32_t {DsiPa=0x0ae94000u,DsiLen=0x400,DsiHwVersion=0x000,DsiCtrl=0x004,DsiStatus=0x008,
     DsiCmdDmaCtrl=0x03c,DsiDmaCmdLength=0x04c,DsiTrigCtrl=0x084,DsiCmdDmaSwTrigger=0x090,
     DsiIntCtrl=0x110,DsiTpgCtrl=0x15c,DsiTpgCmdDmaInitVal=0x17c,DsiTpgDmaFifoReset=0x1ec};
@@ -229,10 +229,30 @@ constexpr uint32_t DsiDmaBusy=1u<<1,DsiMdpBusy=1u<<2,DsiIntDmaDone=1u<<0,
     DsiIntEnableBits=0xaaaaaaaau,DsiTpgFifoOn=(3u<<16)|(1u<<2)|(1u<<1),DsiTrigSw=4u,DsiMaxPayload=60;
 
 vm_offset_t dsiMap;
-unsigned panelHzWant=120,panelHzNow=60,dsiFailures=0,dsiMdpWaits=0;
+unsigned panelHzWant=120,panelHzNow=60,panelId=42,dsiFailures=0,dsiMdpWaits=0;
 bool panelDone=false;
 
-static const uint8_t panelSwitch120[]={
+static const uint8_t panel42Switch120[]={
+    0x15,0,0,0x00,0,0,2, 0x2f,0x03,
+    0x39,0,0,0x40,0,0,6, 0xf0,0x55,0xaa,0x52,0x08,0x00,
+    0x15,0,0,0x40,0,0,2, 0x6f,0x0a,
+    0x15,0,0,0x40,0,0,2, 0xc0,0x20,
+    0x39,0,0,0x40,0,0,6, 0xf0,0x55,0xaa,0x52,0x08,0x02,
+    0x15,0,0,0x40,0,0,2, 0xcc,0x30,
+    0x15,0,0,0x00,10,0,2, 0xce,0x01,
+    0x15,0,0,0x00,0,0,2, 0xcc,0x00
+};
+static const uint8_t panel42Switch60[]={
+    0x15,0,0,0x00,0,0,2, 0x2f,0x02,
+    0x39,0,0,0x40,0,0,6, 0xf0,0x55,0xaa,0x52,0x08,0x00,
+    0x15,0,0,0x40,0,0,2, 0x6f,0x09,
+    0x15,0,0,0x40,0,0,2, 0xc0,0x00,
+    0x39,0,0,0x40,0,0,6, 0xf0,0x55,0xaa,0x52,0x08,0x02,
+    0x15,0,0,0x40,0,0,2, 0xcc,0x30,
+    0x15,0,0,0x00,20,0,2, 0xce,0x01,
+    0x15,0,0,0x00,0,0,2, 0xcc,0x00
+};
+static const uint8_t panel36Switch120[]={
     0x15,0,0,0x00,0,0,2, 0x2f,0x02,
     0x39,0,0,0x40,0,0,6, 0xf0,0x55,0xaa,0x52,0x08,0x08,
     0x15,0,0,0x40,0,0,2, 0xe0,0x01,
@@ -243,7 +263,7 @@ static const uint8_t panelSwitch120[]={
     0x15,0,0,0x40,0,0,2, 0x6f,0x17,
     0x39,0,0,0x00,0,0,4, 0xea,0x38,0x00,0x38
 };
-static const uint8_t panelSwitch60[]={
+static const uint8_t panel36Switch60[]={
     0x15,0,0,0x00,0,0,2, 0x2f,0x00,
     0x39,0,0,0x40,0,0,6, 0xf0,0x55,0xaa,0x52,0x08,0x08,
     0x15,0,0,0x40,0,0,2, 0xe0,0x01,
@@ -334,18 +354,23 @@ void panelHz(void)
 {
     char text[220];
     panelHzWant=120;(void)PE_parse_boot_argn("diting_panel_hz",&panelHzWant,sizeof panelHzWant);
+    panelId=42;(void)PE_parse_boot_argn("diting_panel",&panelId,sizeof panelId);
     if(panelHzWant!=120){panelDone=true;return;}
     if(!diting_dsi_try_acquire(DitingDsiTiming))return; /* retry next frame if backlight holds DSI0 */
     panelDone=true;
     if(!dsiInit()){(void)diting_dsi_release(DitingDsiTiming);return;}
     intfRate("before switch");
     const uint64_t t0=mach_absolute_time();unsigned sent=0;
-    const uint8_t *prog=panelHzWant==120?panelSwitch120:panelSwitch60;
-    const uint32_t bytes=panelHzWant==120?sizeof(panelSwitch120):sizeof(panelSwitch60);
+    const uint8_t *prog=panelId==36
+        ?(panelHzWant==120?panel36Switch120:panel36Switch60)
+        :(panelHzWant==120?panel42Switch120:panel42Switch60);
+    const uint32_t bytes=panelId==36
+        ?(panelHzWant==120?sizeof(panel36Switch120):sizeof(panel36Switch60))
+        :(panelHzWant==120?sizeof(panel42Switch120):sizeof(panel42Switch60));
     const int rc=dsiSet(prog,bytes,false,&sent);
     if(!(dsiRd(DsiStatus)&DsiDmaBusy))(void)diting_dsi_release(DitingDsiTiming);
-    dpuLine(text,snprintf(text,sizeof text,"DITING PANEL: switch to %u Hz: %u packets rc=%d in %llu us (MDP waits %u)\n",
-        panelHzWant,sent,rc,(unsigned long long)us(mach_absolute_time()-t0),dsiMdpWaits));
+    dpuLine(text,snprintf(text,sizeof text,"DITING PANEL: switch panel %u to %u Hz: %u packets rc=%d in %llu us (MDP waits %u)\n",
+        panelId,panelHzWant,sent,rc,(unsigned long long)us(mach_absolute_time()-t0),dsiMdpWaits));
     if(rc)return;
     panelHzNow=panelHzWant;
     uint32_t tc=0;(void)PE_parse_boot_argn("diting_panel_tc",&tc,sizeof tc);
@@ -378,7 +403,7 @@ void dbInit(uint64_t physical,size_t rounded,uint32_t stride,uint32_t height)
     const uint64_t slotStride=rounded>SlotStride?uint64_t(rounded):SlotStride;
     if(lease[0] && !(lease[0]&4095) && lease[1]>=slotStride && lease[0]+lease[1]<=0x100000000ull) {
         zc=2;(void)PE_parse_boot_argn("diting_zc",&zc,sizeof zc);
-        zcAsync=1;(void)PE_parse_boot_argn("diting_zc_async",&zcAsync,sizeof zcAsync);
+        zcAsync=0;(void)PE_parse_boot_argn("diting_zc_async",&zcAsync,sizeof zcAsync);
         (void)PE_parse_boot_argn("diting_slot_premap",&slotPreMap,sizeof slotPreMap);
         if(!slotLock)slotLock=IOSimpleLockAlloc();
         const unsigned total=unsigned(lease[1]/slotStride);

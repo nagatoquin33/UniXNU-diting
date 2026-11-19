@@ -330,6 +330,42 @@ jobs:
           # the recipes resolve the shared ABI through diting_native_inputs, not sheng_root
           DITING_WIFI_SHARED: ${{ github.workspace }}/sheng/drivers/Ath12kWifi
         run: scripts/package.sh --os "${{ inputs.os }}" --uefi ../uefi-diting --fd "$GITHUB_WORKSPACE/firmware-fd/SILICIUM_UEFI.fd"
+      - name: iogpu prelink
+        # package.sh runs kits/XnuPrelink without com.apple.iokit.IOGPUFamily, leaving
+        # DitingIOAcceleratorMetaConstruct zero-filled when diting_metal=1 runs. When
+        # Adreno platform support is enabled in DEFCONFIG, re-prelink the un-prelinked
+        # XNU aggregate with IOGPUFamily + its library-only closure before packing.
+        working-directory: device
+        env:
+          DEFCONFIG: ${{ inputs.defconfig }}
+          OS: ${{ inputs.os }}
+        run: |
+          set -euo pipefail
+          grep -q '^CONFIG_XNU_DITING_ADRENO_PLATFORM=y$' "configs/$DEFCONFIG" || exit 0
+          CONFIG="${DEFCONFIG%_defconfig}"
+          WORK="$GITHUB_WORKSPACE/UniXNU/out/diting/$OS/$CONFIG"
+          NATIVE="$WORK/device-tree/build/xnu/ios-obj/DEVELOPMENT_ARM64_DITING/mach.development.diting"
+          [ -f "$NATIVE" ] || NATIVE=$(find "$WORK" -name 'mach.development.diting' -type f | head -n 1 || true)
+          KERNELCACHE="$GITHUB_WORKSPACE/UniXNU/out/ipsw/22H374/kernelcache.decompressed"
+          [ -f "$KERNELCACHE" ] || KERNELCACHE=$(find "$GITHUB_WORKSPACE/UniXNU/out/ipsw" -name 'kernelcache.decompressed' -type f | head -n 1 || true)
+          [ -f "$NATIVE" ] || { echo "missing native XNU aggregate: $NATIVE" >&2; exit 1; }
+          [ -f "$KERNELCACHE" ] || { echo "missing kernelcache: $KERNELCACHE" >&2; exit 1; }
+          python3 - "$NATIVE" "$KERNELCACHE" "$WORK" <<'PY'
+          import importlib.util, json, shutil, sys, tomllib
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location('build_release_image_linux', 'scripts/build-release-image-linux.py')
+          mod = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(mod)
+          native, kernelcache, work = Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3])
+          board = tomllib.loads(Path('board.toml').read_text())
+          target, report = mod.prelink_release_kernel(
+              native, kernelcache, board['kernel']['prelink']['roots'],
+              int(board['kernel']['prelink']['slide'], 0), work / 'kernel-iogpu', True)
+          shutil.copyfile(target, work / 'kernel/kernel.macho')
+          (work / 'kernel/prelink-iogpu.json').write_text(json.dumps(report, indent=2) + '\n')
+          print('IOGPU prelink:', target, len(target.read_bytes()), 'bytes, sha256', report['candidate_sha256'])
+          PY
+          MTOOLS_SKIP_CHECK=1 mcopy -o -i "$WORK/payload/payload.img" "$WORK/kernel/kernel.macho" "::/EFI/UniXNU/Payloads/kernel.macho"
       - name: v4 container
         # docs/porting/packaging.md stops at boot/boot.img (header v0). The flashable image the
         # firmware accepts is the PONGFAT1 envelope finalize-diting-adt.py writes.
