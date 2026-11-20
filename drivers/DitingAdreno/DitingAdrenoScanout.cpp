@@ -102,10 +102,11 @@ bool dpuBus(const char *when)
     return true;
 }
 
-/* INTF tearcheck / frame-rate observation (MDSS-relative). */
-enum : uint32_t {IntfFrameCount=0xac,IntfTearSyncVsync=0x288,IntfTearIntCount=0x298,IntfTearAutorefresh=0x2b4};
+/* INTF tearcheck / DPU frame-rate observation (MDSS-relative). */
+enum : uint32_t {IntfFrameCount=0xac,IntfTearSyncVsync=0x288,IntfTearAutorefresh=0x2b4};
 static const uint32_t intfOff[4]={0x35000,0x36000,0x37000,0x38000};
-unsigned teIntf=1;uint32_t teCount0,teFrames0;uint64_t teAt0;
+constexpr uint32_t AutorefreshEnable=1u<<31,AutorefreshFrameMask=0xffffu;
+unsigned teIntf=1;uint32_t intfFrames0;uint64_t intfAt0;
 
 /* Panel-pool slots + zero-copy flip state.
  * db[0] is the firmware console framebuffer (CPU frames + fallback presenter).
@@ -165,7 +166,7 @@ bool dbFindPipes(void)
     const uint32_t active=dpuRd(dpuMap+dbPipes.ctl+CtlIntfActive);
     for(unsigned i=1;i<4;++i)if(active&(1u<<i)){teIntf=i;break;}
     const vm_offset_t ib=dpuMap+intfOff[teIntf];
-    teCount0=dpuRd(ib+IntfTearIntCount)>>16;teFrames0=dpuRd(ib+IntfFrameCount);teAt0=mach_absolute_time();
+    intfFrames0=dpuRd(ib+IntfFrameCount);intfAt0=mach_absolute_time();
     dpuLine(text,snprintf(text,sizeof text,"DITING DBUF: pipes %s %s on CTL%d (INTF_%u active=0x%x autorefresh=0x%x vsync_count=%u), flush=0x%x\n",
         ssppNames[dbPipes.pipes[0]],dbPipes.count>1?ssppNames[dbPipes.pipes[1]]:"",found,teIntf,active,
         dpuRd(ib+IntfTearAutorefresh),dpuRd(ib+IntfTearSyncVsync)&0x7ffff,dbPipes.flush));
@@ -174,17 +175,16 @@ bool dbFindPipes(void)
 
 void intfRate(const char *when)
 {
-    if(!teAt0 || !dpuMap)return;
+    if(!intfAt0 || !dpuMap)return;
     const vm_offset_t b=dpuMap+intfOff[teIntf];
-    const uint32_t count=dpuRd(b+IntfTearIntCount)>>16,frames=dpuRd(b+IntfFrameCount);
-    const uint64_t now=mach_absolute_time(),t=us(now-teAt0);
-    if(t<200000)return;
-    const uint64_t te=uint64_t(uint16_t(count-teCount0))*10000000ull/t;
-    const uint64_t fr=uint64_t(frames-teFrames0)*10000000ull/t;
+    const uint32_t frames=dpuRd(b+IntfFrameCount);
+    const uint64_t now=mach_absolute_time(),elapsed=us(now-intfAt0);
+    if(elapsed<200000)return;
+    const uint64_t rate=uint64_t(frames-intfFrames0)*10000000ull/elapsed;
     char text[200];
-    dpuLine(text,snprintf(text,sizeof text,"DITING TE %s: INTF_%u te %llu.%llu/s frames %llu.%llu/s over %llu ms (vsync_count %u)\n",
-        when,teIntf,te/10,te%10,fr/10,fr%10,t/1000,dpuRd(b+IntfTearSyncVsync)&0x7ffff));
-    teCount0=count;teFrames0=frames;teAt0=now;
+    dpuLine(text,snprintf(text,sizeof text,"DITING DPU %s: INTF_%u frames %llu.%llu/s over %llu ms (autorefresh 0x%x, vsync_count %u)\n",
+        when,teIntf,rate/10,rate%10,elapsed/1000,dpuRd(b+IntfTearAutorefresh),dpuRd(b+IntfTearSyncVsync)&0x7ffff));
+    intfFrames0=frames;intfAt0=now;
 }
 
 bool dbLatched(void){return (dpuRd(dpuMap+dbPipes.ctl+CtlFlush)&dbPipes.flush)==0;}
@@ -350,12 +350,28 @@ int dsiSet(const uint8_t *set,uint32_t len,bool lp,unsigned *sent)
     return rc;
 }
 
+void usePerTeAutorefresh()
+{
+    if(!(dpuRd(dpuMap+dbPipes.ctl+CtlIntfActive)&(1u<<teIntf)))return;
+    const vm_offset_t reg=dpuMap+intfOff[teIntf]+IntfTearAutorefresh;
+    const uint32_t inherited=dpuRd(reg);
+    if(!(inherited&AutorefreshEnable) || (inherited&AutorefreshFrameMask)==1)return;
+
+    // 固件为静态开机画面每 60 个 TE 送一帧。接管后每个 TE 都允许锁存新画面。
+    // 保留自动刷新使能和其他字段，沿用命令模式的 CTL_FLUSH 路径。
+    intfRate("before autorefresh update");
+    dpuWr(reg,(inherited&~AutorefreshFrameMask)|1u);
+    char text[160];
+    dpuLine(text,snprintf(text,sizeof text,"DITING PANEL: INTF_%u autorefresh 0x%x -> 0x%x\n",
+        teIntf,inherited,dpuRd(reg)));
+}
+
 void panelHz(void)
 {
     char text[220];
     panelHzWant=120;(void)PE_parse_boot_argn("diting_panel_hz",&panelHzWant,sizeof panelHzWant);
     panelId=42;(void)PE_parse_boot_argn("diting_panel",&panelId,sizeof panelId);
-    if(panelHzWant!=120){panelDone=true;return;}
+    if(panelHzWant!=120){usePerTeAutorefresh();panelDone=true;return;}
     if(!diting_dsi_try_acquire(DitingDsiTiming))return; /* retry next frame if backlight holds DSI0 */
     panelDone=true;
     if(!dsiInit()){(void)diting_dsi_release(DitingDsiTiming);return;}
@@ -381,6 +397,7 @@ void panelHz(void)
         dpuWr(b+IntfTearSyncVsync,(cfg&~0x7ffffu)|count);
         dpuLine(text,snprintf(text,sizeof text,"DITING PANEL: INTF_%u vsync_count %u -> %u\n",teIntf,cfg&0x7ffff,count));
     }
+    usePerTeAutorefresh();
     for(unsigned k=0;k<250;++k)IODelay(1000);
     intfRate("after switch");
 }

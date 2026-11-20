@@ -1,5 +1,7 @@
 # Diting probe policy
 
+> 最新实机状态见本文 [本地 APFS 扩容与正式显示构建](#2026-11-20--本地-apfs-扩容与正式显示构建)。
+
 > 当前权威状态以 `D:\ai\diting\交接-2026-11-18-真机进展与接续.md`、复制计划 `D:\ai\diting\build-work\evidence-20261117-copy-plan\PLAN.md` 与 [`docs/STATUS.md`](docs/STATUS.md) 为准（2026-11-11～11-16 的旧交接与执行计划已归档至 `D:\ai\diting\archive-20261112/` 与 `archive-20261117/`）。下方带日期的段落是历史实机与构建记录。
 
 # 社区优先与移植铁律（强制，优先于自研）
@@ -1835,3 +1837,49 @@ work is the boot itself, not the inputs.
   - `diting-userdata` run `44203238062`（`bd5d0f1`）成功产出 `D:\ai\diting\artifacts\ci-44203238062\diting-ipados18-system.cdr`（6,845,104,128 B，sha256 `f07fb2525c29d5d9c29818c703c7eda072318fcd3a922951850d2af1df2ceed5`，根卷 UUID `B07DF049-7AD9-47B5-9F8F-9EE728056398`）。
   - APFS 离线校验通过：`System/Library/xpc/launchd.plist` 与 `com.apple.cameracaptured.plist` 一致（`JetsamProperties=192`、`ThrottleInterval=30`）；`/diting/libditing-ui18.dylib`（175,488 B，sha256 `12b5a2c3…`）含 `UIKit.InProcessAnimationManager` 与 `display_link_rates`；`hardware_tested=false`（尚未写入手机 OS 窗口）。
 - **仓库整理**：按单分支策略将 `nagatoquin33/UniXNU-diting` 与 `nagatoquin33/UniXNU` 统一收敛为唯一分支 `main`（保留完整历史与 GitHub Actions Secrets，删除本地与远端 `dev` 及临时 `ci/*` 分支）。
+
+
+## 2026-11-20 — v3 真机回读、显示提交与 Data 保全
+
+- 当前基线为 main `d374c19`、正式 v3 在 `boot_a`。从 fastboot 临时启动已校验的 TWRP，保持活动槽 a。用 recovery 按实测 `userdata` 长度回读尾部 4 MiB。两个 ramoops zone 均有效，原始日志在 `D:\ai\diting\build-work\evidence-20261120-v3-final\ramoops_ufs_v3.bin`，sha256 `eb8d5109abad2696350c7212c8298b3ed40bdb82bb1cb8c6dcdb429060a46620`。整个取证过程未写设备分区。
+- 显示源证据为 `INTF_1 autorefresh=0x8000003c`，42 号面板 120 Hz DCS 返回 0，但 DPU 输送约 2 帧/秒。连续动画段约 20–25 fps，GPU fence 最大 4 µs，latch 平均约 21 ms、最大约 28 ms。参照 zizhan 的每 TE 自动刷新与 Qualcomm SDE 对寄存器低 16 位的定义。驱动接管时将启用态 interval 改为 1，并用 DPU 帧计数替代此前失真的 TE 计数。已通过 ARM64 单文件编译、寄存器模拟和 diff 检查。现有 v3 通过发布检查、存储绑定和 loader/ADT 检查。修正尚未整包或上机。
+- `kbd`、`InputUI` 和 `assistantd` 启动，输入模式刷新到 3 个。HID 报告与 IRQ 对应，平均读延迟 149–160 µs。只读 APFS 验证确认 mobile 的 Session Language 为 `zh-CN`，Assistant 和 Dictation 均关闭。从 Data 的统一日志按 v3 boot UUID / InputUI PID 485 对齐。旧启动的 Preferences 有 18,203 条 AFPreferences 记录，v3 的 Preferences 没有同类刷屏。v3 的 Preferences 记录到 9 次键盘 touch down，随后在原输入会话结束时集中处理 4 个按键，kbd 有返回且 UIKit 记录 insertText。已定位到触摸进入 UIKit 后提交过晚，现有记录未给出让键盘任务延后的调用栈，尚不能归因于 DPU 或键盘任务队列的具体等待点。
+- Data 位于 `0x285000000`，长度 `0x800200000`，GPT 中 APFS 起点为窗口内 `0x100000`。已保留整个窗口、原 SHNGROOT、日志于 `D:\ai\codex-backups\diting-20261120-v3-data`。从压缩备份还原的副本通过字节数、SHA-256、GPT 和 APFS 卷 UUID 检查。保留尾部 1 GiB 后 Data 最大长度为 `228197380096` B（212.53 GiB），结束位置 `0x37a69fb000`，与最后 4 MiB ramoops 不重叠。保持 `diting_data_reserve=4` 以维持当前日志的物理位置。
+- 扩容顺序为在副本上挪 GPT 备用表、扩大原 APFS 容器、检查 GPT/APFS 和卷 UUID、核对原偏好及所选用户文件，再更新原 Data 范围及 SHNGROOT。OS 和 SystemOS 的条目及数据不参与写入。现有 `make-data-window.py` 会新建空卷，`expand-diting-ufs-data.py` 要求事先扩好的 128 GB sparsebundle 和不重叠的搬迁范围。当前只有 CI 和 WSL，尚无可在本地对原 APFS 容器扩容的工具，实机 Data 仍为 32 GiB。
+
+
+## 2026-11-20 — 本地 APFS 扩容与正式显示构建
+
+- 实机扩容安装完成，SHNGROOT 的 Data 外窗为 `228197380096` B，APFS 容器为 `228196311040` B，约 212.53 GiB。回读确认 47 段差异、原 APFS UUID、3 个偏好文件、末尾 ramoops 和两个系统窗口。OS、SystemOS 的全窗 SHA-256 与写入前各自相同。
+- Fastboot 已在设备 Diting、活动槽 a 写入上述正式显示镜像至 `boot_a`，并返回 reboot OKAY。整个过程未刷 `boot_b`。桌面帧率、键盘即时提交及 iPadOS 内容量展示还待真机重启后的验收。
+
+
+- 使用 WSL/KVM 启动通过 Apple 签名分块校验的 Sequoia Recovery。虚拟机断网，只连接了 Data 副本。Apple `diskutil apfs resizeContainer disk2s1 0` 将原 APFS 容器扩到 `228196311040` B。扩容后原生卷检查退出码为 0，GPT 检查通过，容器 UUID 和 Data 卷 UUID 均保持。副本的 `/mobile` 等用户目录与备份逐项比对，10,791 个目录及 5,962 个文件和链接的内容、扩展属性、权限与属主一致。
+- Data 原窗实机 SHA-256 与备份一致。写回计划保留 Data 起点、OS/SystemOS 和末尾 1 GiB，最后 4 MiB ramoops 保持原位置。先对新增长度做零初始化，再写 47 段共 1,708,032 B 的差异并回读，最后更新 SHNGROOT。旧窗全量备份和恢复用的 45 段旧数据均在项目外。安装流水见 `D:\ai\diting\build-work\evidence-20261120-v3-final\data-grow-receipt.json`。
+- 显示正式镜像为 `D:\ai\ci-release-20261120-display\diting-release-20261120-display.img`，101,195,776 B，sha256 `1072dd164d0fc1aeb3e6b2c5a0b8663cba8b4ea4d181aec75f2ecca7d5377c34`。以 v3 外壳的固件、ADT、manifest 和 GPU addon 为基线，载荷内只替换 kernel.macho。WSL 使用与 v3 同 pin 的核心 `0ce9779` 构建，IOGPU 预链接、发布检查、存储绑定与 loader/ADT 检查通过。核对实机 boot_a 前缀与 v3 镜像完全一致，原镜像可用于回退。
+- 键盘统一日志进一步确认 Settings 在焦点保留期间收到了多次触摸，切走输入会话后才集中发给 kbd。未找到能把延后明确归到某个 UIKit 调用栈的记录。对键盘功能的最终判断需要用正式显示修正复测实际点击、提交和语言切换。
+
+- 33 实机回报已进入桌面，主屏动画流畅，仍能观察到残影。正式镜像实测帧率待回读 DPU 日志。
+- 浏览器可输入字母。Wi-Fi 密码框仍无法完成输入，数字键盘切换失败。继续对照安全文本框、数字键盘和浏览器普通文本输入的真机日志。zizhan 的原生 Wi-Fi 加入记录用 secure text field 的 insertText 验证原生加入链，不能据此判断物理键盘点击和数字切换。
+- 33 回报 Wi-Fi 正常，音量无法调节，视频解码有问题，蓝牙不可用。
+
+## 2026-11-20 — 正式显示镜像与输入、USB 真机日志
+
+- 从活动槽 a 的 Fastboot 临时启动已校验的 TWRP，在独立 ADB 端口 5038 只读回收。证据位于 `D:\ai\diting\build-work\evidence-20261120-display-live`，ramoops SHA-256 `0dc612bce9a20396fcf4a5756445d308a1c41049210aa70a55eabe196e7ef454`。读取到 iPadOS 新启动写入的 APFS checkpoint 3594，Data 容器容量 `228196311040` B，卷 UUID 与扩容前一致。
+- 42 号面板的 120 Hz 命令返回 0。INTF_1 自动刷新从 60 改为 1 后，117 个 DPU 采样窗口为 121.2–121.6 次扫描/秒。显示锁存累计均值约 4.0–4.5 ms，最大 8.36 ms。应用合成仍随负载波动，采样最高为 110 fps，不能宣告应用稳定 120 fps。33 已实测主屏流畅，残影仍待定位。
+- 同轮统一日志中 Safari 有多次在会话内向 kbd 发送输入事件并收到返回。Settings 的 Wi‑Fi 输入有一轮在会话结束后才集中提交 7 个键，另一轮在焦点内提交 5 个键，后续两轮有触摸但无键事件。现有日志未记录具体数字键面选择或拒绝原因。WiFiKitUI 缺少 `WifiBars3` 图标的记录不能解释键盘。保持密码框的原生安全输入语义。
+- 正式镜像保留了来自 v3 的 `diting_usb=0`。实机 `lockdownd` 报 `we failed to create an IOUSBDeviceController`，与爱思无法连接吻合。此次只回读，未切换 USB 配置、未刷写。
+
+## 2026-11-20 — Safari 数字符号键面与 USB 开关核对
+
+- 33 实测 Safari 地址栏里的 123 也无法切换。按指定顺序复现后回读，当轮 `MobileSafari[302]` 与 `InputUI[368]` 对齐。Safari 有触摸进入，UIKitCore 两次报告键盘 `iPhone-PortraitChoco-Emoji` 找不到 type 10 的 keyplane，回落到该 Emoji 布局的 Letters。真实 Data 配置中保留原生英文 QWERTY、拼音及 Emoji；实机 TextInputUI 中有 iPhone、iPad 与 Dynamic 键面文件。尚需在明确选中的英文 QWERTY 下辨别 123 失败是否同样发生，不能据此归为合成、触摸丢失或缺少整个键面文件。证据为 `D:\ai\diting\build-work\evidence-20261120-key123`。
+- 本次重启取证时 APFS 容器仍为 `228196311040` B，checkpoint 5075。
+- 33 请求开启原生 USB。真实正式镜像有 DWC3 驱动，实际 ADT 缺 `diting-usb-handoff`、`diting-usb-dma`、`diting-usb-status` 且当前固件解析的 FFS 未找到 USB handoff 字段。读取实机 OS 确认 `/diting/libditing-usb18.dylib`、`/diting/usb-mux`、`/usr/libexec/usb-mux` 和桥接对应 launchd job 缺失。驱动必须先取得真实旧 DMA 已停和独立低内存的交接才能接管。此次未改开关，需补齐固件和系统桥接才能测试爱思连接。
+
+- 33 确认 Safari 中地球键和 123 都点不动，英文 QWERTY 的单变量对照还未取得。触控适配沿用 zizhan 的边缘识别规则，左右 16/375、上 16/812、底部 34/812 的触点标记为 FromEdgeTip。统一日志中 Safari 有成对的 KeyboardTouch down/up，但没有能与两个控件对应的触点坐标。需用实机键盘位置核对边缘标记与键盘窗口几何，再决定是否修改。
+
+- 提醒事项的实机照片补充了跨 App 的几何证据。地球键中心落在可视区域左沿，最右侧 P 和退格被裁掉。123 中心约在该行可视宽度的 11% 处，高于底部手势带，不吻合触控适配对该点的边缘标记阈值。Safari 同轮统一日志中的 UIKeyboardAutomatic 宽 375 pt，宿主窗口宽 406.667 pt，部分流程还把键盘放在 x=15.8333 pt。实际 UIScreen 日志为 406.67 × 904 pt、scale 3。现有证据将排查重点转到键盘视图和宿主窗口的尺寸与坐标变换。尚未确认 UIKit 在何处选择 375 pt，不修改边缘手势阈值或全局显示尺寸。
+
+## iPadOS 18 阶段收尾
+
+- 保留已上机的显示修正与 APFS 扩容记录。后续候选基线为 iOS 或 macOS，尚未选定。复现见 [docs/REPRODUCE-ipados18.md](docs/REPRODUCE-ipados18.md)。

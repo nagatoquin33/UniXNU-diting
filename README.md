@@ -11,33 +11,21 @@ Redmi K50 至尊版（`diting` / Qualcomm SM8475）的 UniXNU 格式 2 设备仓
 - 本设备：[格式 2 配置](migration/format2/README.zh.md)、[系统迁移](migration/ipados18/README.zh.md)、
   [结构化移植记录](porting.toml)、[AGENTS.md](AGENTS.md)、[当前状态](docs/STATUS.md)、[来源说明](docs/PROVENANCE.md)、[架构](docs/ARCHITECTURE.md)、[镜像清单](docs/IMAGES.md)
 
-## 当前状态（2026-11-16）
 
-**已在 Diting 真机观察到的结果**（逐条见 `AGENTS.md` 与 `docs/STATUS.md`）：
+## iPadOS 阶段收尾（2026-11-20）
 
-- **桌面与触摸**：Diting 布局 OS（`/sbin/launchd` = `/diting/init`，sha256 `95cb7341…`；`libditing-ui18.dylib`
-  174,976 B 通过 `/dev/diting-touch` 消费事件）经整盘 userdata sparse 恢复后，addon18 启动到
-  iPadOS 18.7.10 桌面，Goodix GT9916 触摸可用（点击、滑动、拖动）。Pong 时代布局（`/pong`、
-  `libpong-ui18`）与本机触摸桥不兼容。
-- **GPU / Metal 硬件路径**：真机已出现 `DITING ADRENO: CP ready`、两条 `DITING METAL` 行、
-  `DITING SCANOUT ... status=0` 与 GPU submits 记录；UI 帧率仍不平滑（见阻塞）。
-- **其余已测**：八核 CPU0–7 均 `first boot completed`；六/七件 GPU/ADSP addon 分片同步写入后持久化
-  （`written=0 same=6/7`，Extensions stage/status 5/0）；PID 1 `exec /sbin/launchd` 的 EFAULT 已修复。
+本阶段保留已上机的 **iPadOS 18.7.10 / 22H374** 基线。后续计划评估 iOS 或 macOS 基线。选型和移植结果待定。
 
-**当前阻塞**（真机日志定位，非推断）：
+| 已实机观察 | 结果 |
+| --- | --- |
+| 启动和触摸 | 进入桌面，八核已启动，常规点击与滑动可用 |
+| Adreno 730 / 显示 | Metal 提交和零拷贝扫描输出已跑通。每个 TE 自动刷新一次后，面板实测 121.2–121.6 Hz，显示锁存平均约 4.0–4.5 ms。主屏明显更流畅，应用合成最高采到 110 fps |
+| Wi‑Fi | 已实测可用。设置里的密码输入仍有问题 |
+| 存储 | 原 32 GiB Data 在实机扩到 212.53 GiB。保留卷 UUID 和用户数据，OS 与 SystemOS 的全窗哈希一致，尾部保留 1 GiB，最后 4 MiB 继续用于 ramoops |
 
-- **Wi-Fi**：首笔 smpe2 RPMh 投票 `0x40508=7` 在 PCIe 训练前超时，未进入扫描。
-- **电量 / ADSP**：ADSP 到达 stage 6，stage 7 的 `0x30030=7` 超时（-60），尚未发布电池服务。
-- **UI 帧率**：Metal pipeline 编译未摊销（插件已改为内嵌 primelist）、shader cache 不落盘，导致卡顿；
-  这是下一步 GPU 工作项。
-- **关机**：内核当前没有 poweroff 路径，长按电源不能关机；下一候选内核包含 PSCI SYSTEM_OFF 长按补丁。
+仍有键盘裁切、Wi‑Fi 密码输入与数字键面切换、残影、音量调节、视频解码和蓝牙问题。原生 USB 缺少固件 DMA 交接和系统 usb-mux 桥接，当前关闭。应用持续 120 fps 及休眠唤醒尚未验收。
 
-**待验证镜像**（静态检查 PASS，`hardware_tested=false`）：`diting-addon24-diag.img`
-（`54ed270b…`，`e991983d` 内核 + primelist 插件）与 `diting-addon26-diag.img`
-（`ee7278b2…`，重建 release 内核含 pwrkey/PSCI SYSTEM_OFF、TCS1、touch-latency、primelist 与 7 文件 addon）。
-
-**未达成、不得声称可用**：Wi-Fi 扫描/关联/DHCP、电量与充电、Metal 逐应用兼容性与稳定帧率、
-音频（live DT 为双 CS35L41，尚未接入）、休眠唤醒、按键关机。
+详见 [实机状态与证据](docs/STATUS.md) 和 [构建复现](docs/REPRODUCE-ipados18.md)。
 
 ## 组件与来源
 
@@ -46,17 +34,12 @@ Chengdong-Yu 的 `pong-*` 仓库（曾以 submodule 引用，现为仓内普通�
 
 **来源纪律**：`porting.toml` 与 `migration/ipados18/` 中的部分记录继承自 Pong（Nothing Phone 2，同 SM8475）真机历史，例如 TFA9873 音频、铃声与部分 Wi-Fi/存储结论。它们可以作为实现参照，**不是 Diting 的验证证据**；Diting 的当前结论以 `AGENTS.md` 的实机条目和 `docs/STATUS.md` 为准。详见 [docs/PROVENANCE.md](docs/PROVENANCE.md)。
 
+
 ## 构建
 
-需要 Python 3.12、dtc、匹配的 22H374 restore/ABI 输入和板级私有固件。源版本由 `feeds.toml`、`unixnu.lock` 和迁移记录固定。
+内核可在 Linux / WSL 使用 `xnu-linux-toolchain` 构建。macOS 用于准备 Apple OS 窗口和原生 APFS 操作。CI 将 [OS 窗口准备](.github/workflows/diting-userdata.yml) 与 [固件和启动镜像](.github/workflows/package.yml) 分开，由手动运行触发。
 
-- **内核与启动镜像**：Linux 上用 `scripts/linux/` + `xnu-linux-toolchain` 构建（ld64 为硬依赖，xcodebuild/iPhoneOS SDK 不是）；Xcode 仅 OS 窗口内容一次性制备需要。
-- **ADT**：只对已验证 ADT 做二进制补丁（注入 goodix 配置/坐标等），**不要重新生成 ADT**；重新生成会破坏内存拓扑并触发 AppleARMCPU panic。
-- **预链接**：必须使用 `kits/NativePrelink/emit_prelink.py` 的 `emit()`（`__PRELINK_INFO` 在组件区之上），并保证 `IOGPUFamily` 等 Metal 依赖以 library-only 入库；否则会在 Metal 发布时跳到零填充地址。
-- **最终镜像**：以 Windows `D:\ai\diting\build-work\diting-addon*.img` 为准；不要直接启动构建目录里的同名中间镜像，启动前从最终镜像回读内核并逐字节比对。
-- **CI**：`.github/workflows/package.yml`（仅 `workflow_dispatch`）在 macOS runner 上做可选打包；本地 Linux 链路不需要它。
-
-三个卷 UUID 是内核常量，换 userdata 必须重编内核；占位 UUID 的构建只能用于编译验证，不能上机。
+构建需要与 22H374 匹配的还原输入、板级固件和实机卷布局。OS、SystemOS 和 Data 的 UUID 必须与内核配置匹配。构建、验证命令及镜像和中间文件的保留范围见 [复现文档](docs/REPRODUCE-ipados18.md)。
 
 ## 源码边界
 
